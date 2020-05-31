@@ -445,6 +445,8 @@ ssize_t fsg_store_file(struct fsg_lun *curlun, struct rw_semaphore *filesem,
 	if (count > 0 && buf[count-1] == '\n')
 		((char *) buf)[count-1] = 0;		/* Ugh! */
 
+	pr_info("%s:%d, file=%s\n", __FUNCTION__, __LINE__, buf);
+
 	/* Load new medium */
 	down_write(filesem);
 	if (count > 0 && buf[0]) {

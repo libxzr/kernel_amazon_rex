@@ -33,6 +33,9 @@
 #include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/syscalls.h>
+#if defined(CONFIG_TOI)
+#include <linux/suspend.h>
+#endif
 #include <linux/kexec.h>
 #include <linux/kdb.h>
 #include <linux/ratelimit.h>
@@ -46,6 +49,16 @@
 #include <linux/utsname.h>
 #include <linux/ctype.h>
 #include <linux/uio.h>
+#include <linux/proc_fs.h>
+#if defined(CONFIG_LAB126)
+#include <linux/time.h>
+#include <linux/rtc.h>
+#endif
+
+#if defined(CONFIG_LAB126) && defined(CONFIG_FALCON)
+extern int can_use_falcon(void);
+extern void __dump_lastk_to_mmc(char *buf, unsigned long start, unsigned int size);
+#endif
 
 #include <asm/uaccess.h>
 
@@ -54,6 +67,10 @@
 
 #include "console_cmdline.h"
 #include "braille.h"
+
+#ifdef CONFIG_EARLY_PRINTK_DIRECT
+extern void printascii(char *);
+#endif
 
 int console_printk[4] = {
 	CONSOLE_LOGLEVEL_DEFAULT,	/* console_loglevel */
@@ -268,6 +285,20 @@ static char __log_buf[__LOG_BUF_LEN] __aligned(LOG_ALIGN);
 static char *log_buf = __log_buf;
 static u32 log_buf_len = __LOG_BUF_LEN;
 
+#ifdef CONFIG_TOI_INCREMENTAL
+void toi_set_logbuf_untracked(void)
+{
+    int i;
+    struct page *log_buf_start_page = virt_to_page(__log_buf);
+
+    printk("Not protecting kernel printk log buffer (%p-%p).\n",
+            __log_buf, __log_buf + __LOG_BUF_LEN);
+
+    for (i = 0; i < (1 << (CONFIG_LOG_BUF_SHIFT - PAGE_SHIFT)); i++)
+        SetPageTOI_Untracked(log_buf_start_page + i);
+}
+#endif
+
 /* Return log buffer address */
 char *log_buf_addr_get(void)
 {
@@ -367,11 +398,11 @@ static int log_make_free_space(u32 msg_size)
 }
 
 /* compute the message size including the padding bytes */
-static u32 msg_used_size(u16 text_len, u16 dict_len, u32 *pad_len)
+static u32 msg_used_size(u16 text_len, u16 dict_len, u32 *pad_len, u16 extra_len)
 {
 	u32 size;
 
-	size = sizeof(struct printk_log) + text_len + dict_len;
+	size = sizeof(struct printk_log) + text_len + dict_len + extra_len;
 	*pad_len = (-size) & (LOG_ALIGN - 1);
 	size += *pad_len;
 
@@ -387,7 +418,7 @@ static u32 msg_used_size(u16 text_len, u16 dict_len, u32 *pad_len)
 static const char trunc_msg[] = "<truncated>";
 
 static u32 truncate_msg(u16 *text_len, u16 *trunc_msg_len,
-			u16 *dict_len, u32 *pad_len)
+			u16 *dict_len, u32 *pad_len, u16 extra_len)
 {
 	/*
 	 * The message should not take the whole buffer. Otherwise, it might
@@ -401,8 +432,63 @@ static u32 truncate_msg(u16 *text_len, u16 *trunc_msg_len,
 	/* disable the "dict" completely */
 	*dict_len = 0;
 	/* compute the size again, count also the warning message */
-	return msg_used_size(*text_len + *trunc_msg_len, 0, pad_len);
+	return msg_used_size(*text_len + *trunc_msg_len, 0, pad_len, extra_len);
 }
+
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
+static size_t print_time(u64 ts, char *buf);
+
+/* Fix addressed purified printk buffers */
+#define LOG_GOAL_LOCATION 0x9be00000
+#define LOG_GOAL_SIZE     0x00040000
+#define MMC_BLOCK_SIZE 	  512
+#if defined(CONFIG_LAB126)
+#define SNAPSHOT_OFFSET 	0x2800000
+#define LOG_GOAL_LOCATION_MMC 	(SNAPSHOT_OFFSET / MMC_BLOCK_SIZE - 2 * (LOG_GOAL_SIZE / MMC_BLOCK_SIZE))
+#endif
+
+static unsigned long __initdata log_goal_location = 0;
+static char *log_goal_first = NULL;
+static char *log_goal_last = NULL;
+static char *log_goal_idx = NULL;
+static char *last_log_buffer = NULL;
+#endif
+
+#if defined(CONFIG_LAB126)
+void dump_lastk_to_mmc(void)
+{
+	struct timeval time;
+	unsigned long local_time;
+	struct rtc_time tm;
+	void (*dump_lastk_to_mmc_ptr) (char*, unsigned long, unsigned int) = NULL;
+	static u8 IS_CALLED = 0;
+
+	if (IS_CALLED)
+		return;
+
+#if defined(CONFIG_FALCON) /* Falcon case only*/
+	if (can_use_falcon()) {
+		dump_lastk_to_mmc_ptr = __dump_lastk_to_mmc;
+	}
+#else /* TUXONICE case only*/
+	/* Will check-in later */
+#endif /* !defined(CONFIG_FALCON) */
+
+	if (!dump_lastk_to_mmc_ptr) {
+		return;
+	}
+
+	do_gettimeofday(&time);
+	local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
+	rtc_time_to_tm(local_time, &tm);
+	if (log_goal_idx) {
+		pr_info(" dump_lastk_to_mmc @ (%04d-%02d-%02d %02d:%02d:%02d)\n", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+		dump_lastk_to_mmc_ptr(log_goal_first, LOG_GOAL_LOCATION_MMC , LOG_GOAL_SIZE / MMC_BLOCK_SIZE);
+	}
+	IS_CALLED = 1;
+}
+EXPORT_SYMBOL(dump_lastk_to_mmc);
+#endif
 
 /* insert record into the buffer, discard old ones, update heads */
 static int log_store(int facility, int level,
@@ -413,14 +499,32 @@ static int log_store(int facility, int level,
 	struct printk_log *msg;
 	u32 size, pad_len;
 	u16 trunc_msg_len = 0;
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
+	u64 timestamp;
+	u16 timestamp_len = 0;
+#endif
 
 	/* number of '\0' padding bytes to next message */
-	size = msg_used_size(text_len, dict_len, &pad_len);
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
+	if (ts_nsec > 0)
+		timestamp = ts_nsec;
+	else
+		timestamp = local_clock();
+	timestamp_len = print_time(timestamp, NULL);
+	size = msg_used_size(text_len, dict_len, &pad_len, timestamp_len);
+#else
+	size = msg_used_size(text_len, dict_len, &pad_len, 0);
+#endif
 
 	if (log_make_free_space(size)) {
 		/* truncate the message if it is too long for empty buffer */
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
 		size = truncate_msg(&text_len, &trunc_msg_len,
-				    &dict_len, &pad_len);
+				    &dict_len, &pad_len, timestamp_len);
+#else
+		size = truncate_msg(&text_len, &trunc_msg_len,
+				    &dict_len, &pad_len, 0);
+#endif
 		/* survive when the log buffer is too small for trunc_msg */
 		if (log_make_free_space(size))
 			return 0;
@@ -438,21 +542,51 @@ static int log_store(int facility, int level,
 
 	/* fill message */
 	msg = (struct printk_log *)(log_buf + log_next_idx);
+
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
+	// Timstamp is in msg header, this makes printk buffer display untolerant to
+	// buffer corruptions, if we try to reconstruct headers
+	// be able to display previos printk after reboot, we want
+	// the timestamp to be in the text, not parse headers
+	msg->text_len = print_time(timestamp, log_text(msg));
+	memcpy(log_text(msg) + msg->text_len, text, text_len);
+	msg->text_len += text_len;
+	if (trunc_msg_len) {
+		memcpy(log_text(msg) + msg->text_len, trunc_msg, trunc_msg_len);
+		msg->text_len += trunc_msg_len;
+	}
+
+	if (log_goal_idx) {
+		if (msg->text_len >= (log_goal_last - log_goal_idx)) {
+			log_goal_idx = log_goal_first;
+		}
+		/* no else here */ if (msg->text_len < (log_goal_last - log_goal_idx)) {
+			memcpy(log_goal_idx, log_text(msg), msg->text_len);
+			log_goal_idx += msg->text_len;
+			*log_goal_idx++ = '\n';
+		}
+	}
+#else
 	memcpy(log_text(msg), text, text_len);
 	msg->text_len = text_len;
 	if (trunc_msg_len) {
 		memcpy(log_text(msg) + text_len, trunc_msg, trunc_msg_len);
 		msg->text_len += trunc_msg_len;
 	}
+#endif
 	memcpy(log_dict(msg), dict, dict_len);
 	msg->dict_len = dict_len;
 	msg->facility = facility;
 	msg->level = level & 7;
 	msg->flags = flags & 0x1f;
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
+	msg->ts_nsec = timestamp;
+#else
 	if (ts_nsec > 0)
 		msg->ts_nsec = ts_nsec;
 	else
 		msg->ts_nsec = local_clock();
+#endif
 	memset(log_dict(msg) + dict_len, 0, pad_len);
 	msg->len = size;
 
@@ -882,6 +1016,85 @@ static void __init log_buf_add_cpu(void)
 static inline void log_buf_add_cpu(void) {}
 #endif /* CONFIG_SMP */
 
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
+
+static int __init log_goal_position(char *str) {
+	//reserve of the buffer already happen and used the in-code value, skip command line parsing
+	if (log_goal_location) {
+		printk(KERN_INFO "Printk log had been placed at 0x%08lx\n", log_goal_location);
+	} else {
+		log_goal_location = memparse(str, &str);
+		printk(KERN_INFO "Will try to place printk log at 0x%08lx\n", log_goal_location);
+	}
+	return 0;
+}
+early_param("log_pos_goal", log_goal_position);
+
+void printk_reserve_buf(void) {
+	int ret = -EBUSY;
+
+	// reserving bootmem can be placed at very early boot time and parameters
+	// can't be parsed at this time, use in-code define LOG_GOAL_LOCATION
+	if (!log_goal_location) {
+		log_goal_location = LOG_GOAL_LOCATION;
+		new_log_buf_len = log_buf_len;
+	}
+
+	printk(KERN_INFO "log_goal_location: 0x%lx\n", log_goal_location);
+
+	if (memblock_is_region_memory(log_goal_location, LOG_GOAL_SIZE * 2) &&
+			!memblock_is_region_reserved(log_goal_location, LOG_GOAL_SIZE * 2)) {
+		ret = memblock_reserve(log_goal_location, LOG_GOAL_SIZE * 2);
+	}
+
+	if (ret < 0) {
+		printk(KERN_ERR "Unable to change over to statically positioned printk buffer!\n");
+		log_goal_location = 0x0;
+	}
+
+	printk(KERN_INFO "Printk log placed at 0x%08lx\n", log_goal_location);
+}
+
+static ssize_t lastk_buffer_read(struct file *file, char __user *buf, size_t count, loff_t *off) {
+	int i;
+	ssize_t written = 0;
+
+	if (!last_log_buffer) {
+		printk(KERN_ERR "Printk backup buffer is unavailable\n");
+		return 0;
+	}
+
+	written = simple_read_from_buffer(buf, count, off, last_log_buffer, LOG_GOAL_SIZE);
+
+	//access to user buffer was already validated in above via copy_to_user
+	//its safe to access same memory via direct /readswrites
+	for (i=0; i<written; i++) {
+		if (unlikely(buf[i] == '\0')) {
+			buf[i] = ' ';
+		}
+	}
+
+	return written;
+}
+
+static struct file_operations printkbuf_fops = {
+	.owner = THIS_MODULE,
+	.read = lastk_buffer_read,
+	.write = NULL,
+};
+
+void setup_printk_proc(void) {
+	struct proc_dir_entry *backup_proc_entry;
+
+	backup_proc_entry = proc_create("printkbuf", S_IRUGO, NULL, &printkbuf_fops);
+
+	if (!backup_proc_entry) {
+		printk(KERN_ERR "Failed to initialize printk recovery proc entry\n");
+	}
+}
+
+#endif /* CONFIG_LAB126_PRINTK_BUFFER */
+
 void __init setup_log_buf(int early)
 {
 	unsigned long flags;
@@ -901,6 +1114,22 @@ void __init setup_log_buf(int early)
 		new_log_buf =
 			memblock_virt_alloc(new_log_buf_len, LOG_ALIGN);
 	} else {
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
+		if (log_goal_location) {
+			log_goal_idx = log_goal_first = __va(log_goal_location);
+			log_goal_last = log_goal_first + LOG_GOAL_SIZE - 1;
+			last_log_buffer = log_goal_first + LOG_GOAL_SIZE;
+
+			memcpy(last_log_buffer, log_goal_first, LOG_GOAL_SIZE);
+
+			printk("Prink buffer had been relocated to physical address: 0x%08lx\n",
+				log_goal_location);
+
+			//Now that it is saved, clear out last time's prink to prevent log framents from
+			//recusrively showing up in printk logs.
+			memset(log_goal_first, '\0', LOG_GOAL_SIZE);
+		}
+#endif
 		new_log_buf = memblock_virt_alloc_nopanic(new_log_buf_len,
 							  LOG_ALIGN);
 	}
@@ -1032,7 +1261,10 @@ static size_t print_prefix(const struct printk_log *msg, bool syslog, char *buf)
 		}
 	}
 
+#ifndef CONFIG_LAB126_PRINTK_BUFFER
+	//timestamp is already part of the text, don't need another one
 	len += print_time(msg->ts_nsec, buf ? buf + len : NULL);
+#endif
 	return len;
 }
 
@@ -1584,10 +1816,13 @@ static size_t cont_print_text(char *text, size_t size)
 	size_t textlen = 0;
 	size_t len;
 
+#ifndef CONFIG_LAB126_PRINTK_BUFFER
+	//timestamp is already part of the text, don't need another one
 	if (cont.cons == 0 && (console_prev & LOG_NEWLINE)) {
 		textlen += print_time(cont.ts_nsec, text);
 		size -= textlen;
 	}
+#endif
 
 	len = cont.len - cont.cons;
 	if (len > 0) {
@@ -1704,6 +1939,10 @@ asmlinkage int vprintk_emit(int facility, int level,
 			text = (char *)end_of_header;
 		}
 	}
+
+#ifdef CONFIG_EARLY_PRINTK_DIRECT
+	printascii(text);
+#endif
 
 	if (level == LOGLEVEL_DEFAULT)
 		level = default_message_loglevel;

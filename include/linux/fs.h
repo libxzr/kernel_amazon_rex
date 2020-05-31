@@ -1247,6 +1247,9 @@ struct mm_struct;
 #define UMOUNT_NOFOLLOW	0x00000008	/* Don't follow symlink on umount */
 #define UMOUNT_UNUSED	0x80000000	/* Flag guaranteed to be unused */
 
+#if defined(CONFIG_TOI)
+extern struct list_head super_blocks;
+#endif
 
 /* Possible states of 'frozen' field */
 enum {
@@ -1726,6 +1729,10 @@ struct super_operations {
 #define S_DAX		8192	/* Direct Access, avoiding the page cache */
 #else
 #define S_DAX		0	/* Make all the DAX code disappear */
+#endif
+#if defined(CONFIG_TOI)
+#define S_ATOMIC_COPY	16384	/* Pages mapped with this inode need to be
+				   atomically copied (gem) */
 #endif
 
 /*
@@ -2248,6 +2255,15 @@ extern struct super_block *freeze_bdev(struct block_device *);
 extern void emergency_thaw_all(void);
 extern int thaw_bdev(struct block_device *bdev, struct super_block *sb);
 extern int fsync_bdev(struct block_device *);
+#if defined(CONFIG_TOI)
+extern int fsync_super(struct super_block *);
+extern int fsync_no_super(struct block_device *);
+#define FS_FREEZER_FUSE 1
+#define FS_FREEZER_NORMAL 2
+#define FS_FREEZER_ALL (FS_FREEZER_FUSE | FS_FREEZER_NORMAL)
+void freeze_filesystems(int which);
+void thaw_filesystems(int which);
+#endif
 extern int sb_is_blkdev_sb(struct super_block *sb);
 #else
 static inline void bd_forget(struct inode *inode) {}

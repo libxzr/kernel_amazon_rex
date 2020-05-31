@@ -674,8 +674,13 @@ ehci_hub_status_data (struct usb_hcd *hcd, char *buf)
 	}
 
 	/* If a resume is in progress, make sure it can finish */
+#ifdef CONFIG_USB_REX_WAN
+	if (ehci->resuming_ports)
+		mod_timer(&hcd->rh_timer, jiffies + msecs_to_jiffies(USB_RESUME_TIMEOUT + 5));
+#else
 	if (ehci->resuming_ports)
 		mod_timer(&hcd->rh_timer, jiffies + msecs_to_jiffies(25));
+#endif
 
 	spin_unlock_irqrestore (&ehci->lock, flags);
 	return status ? retval : 0;
@@ -922,7 +927,7 @@ int ehci_hub_control(
 				break;
 #ifdef CONFIG_USB_OTG
 			if ((hcd->self.otg_port == (wIndex + 1))
-			    && hcd->self.b_hnp_enable) {
+			    && hcd->self.b_hnp_enable && !hcd->self.otg_fsm) {
 				otg_start_hnp(hcd->usb_phy->otg);
 				break;
 			}
@@ -1020,8 +1025,13 @@ int ehci_hub_control(
 			/* Remote Wakeup received? */
 			if (temp & PORT_RESUME) {
 				/* resume signaling for 20 msec */
+#ifdef CONFIG_USB_REX_WAN
+				ehci->reset_done[wIndex] = jiffies
+				        + msecs_to_jiffies(USB_RESUME_TIMEOUT);
+#else
 				ehci->reset_done[wIndex] = jiffies
 						+ msecs_to_jiffies(20);
+#endif
 				usb_hcd_start_port_resume(&hcd->self, wIndex);
 				set_bit(wIndex, &ehci->resuming_ports);
 				/* check the port again */

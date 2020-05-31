@@ -19,6 +19,7 @@
 #include <linux/utsname.h>
 
 #include <linux/usb/composite.h>
+#include <linux/usb/otg.h>
 #include <asm/unaligned.h>
 
 #include "u_os_desc.h"
@@ -845,7 +846,7 @@ done:
 }
 EXPORT_SYMBOL_GPL(usb_add_config);
 
-static void remove_config(struct usb_composite_dev *cdev,
+static void unbind_config(struct usb_composite_dev *cdev,
 			      struct usb_configuration *config)
 {
 	while (!list_empty(&config->functions)) {
@@ -860,7 +861,6 @@ static void remove_config(struct usb_composite_dev *cdev,
 			/* may free memory for "f" */
 		}
 	}
-	list_del(&config->list);
 	if (config->unbind) {
 		DBG(cdev, "unbind config '%s'/%p\n", config->label, config);
 		config->unbind(config);
@@ -887,9 +887,11 @@ void usb_remove_config(struct usb_composite_dev *cdev,
 	if (cdev->config == config)
 		reset_config(cdev);
 
+	list_del(&config->list);
+
 	spin_unlock_irqrestore(&cdev->lock, flags);
 
-	remove_config(cdev, config);
+	unbind_config(cdev, config);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -1534,6 +1536,32 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 				value = min(w_length, (u16) value);
 			}
 			break;
+		case USB_DT_OTG:
+			if (gadget_is_otg(gadget)) {
+				struct usb_configuration *config;
+				int otg_desc_len = 0;
+
+				if (cdev->config)
+					config = cdev->config;
+				else
+					config = list_first_entry(
+							&cdev->configs,
+						struct usb_configuration, list);
+				if (!config)
+					goto done;
+
+				if (gadget->otg_caps &&
+					(gadget->otg_caps->otg_rev >= 0x0200))
+					otg_desc_len += sizeof(
+						struct usb_otg20_descriptor);
+				else
+					otg_desc_len += sizeof(
+						struct usb_otg_descriptor);
+
+				value = min_t(int, w_length, otg_desc_len);
+				memcpy(req->buf, config->descriptors[0], value);
+			}
+			break;
 		}
 		break;
 
@@ -1773,6 +1801,8 @@ unknown:
 			break;
 
 		case USB_RECIP_ENDPOINT:
+			if (!cdev->config)
+				break;
 			endp = ((w_index & 0x80) >> 3) | (w_index & 0x0f);
 			list_for_each_entry(f, &cdev->config->functions, list) {
 				if (test_bit(endp, f->endpoints))
@@ -1837,6 +1867,12 @@ void composite_disconnect(struct usb_gadget *gadget)
 	struct usb_composite_dev	*cdev = get_gadget_data(gadget);
 	unsigned long			flags;
 
+	if (cdev == NULL) {
+		WARN(1, "%s: Calling disconnect on a Gadget that is \
+			 not connected\n", __func__);
+		return;
+	}
+
 	/* REVISIT:  should we have config and device level
 	 * disconnect callbacks?
 	 */
@@ -1875,7 +1911,8 @@ static void __composite_unbind(struct usb_gadget *gadget, bool unbind_driver)
 		struct usb_configuration	*c;
 		c = list_first_entry(&cdev->configs,
 				struct usb_configuration, list);
-		remove_config(cdev, c);
+		list_del(&c->list);
+		unbind_config(cdev, c);
 	}
 	if (cdev->driver->unbind && unbind_driver)
 		cdev->driver->unbind(cdev);

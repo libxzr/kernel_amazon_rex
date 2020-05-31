@@ -91,3 +91,5 @@ obj-$(CONFIG_SMP)		+= psci_smp.o
 endif
 
 extra-y := $(head-y) vmlinux.lds
+
+obj-$(CONFIG_FALCON)		+= fbios.o falconmem.o

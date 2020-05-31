@@ -48,6 +48,8 @@
 #include <linux/init.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
+#include <linux/vmalloc.h>
+#include <linux/fs.h>
 
 #define TIMER_MARGIN	60		/* Default is 60 seconds */
 static unsigned int soft_margin = TIMER_MARGIN;	/* in seconds */
@@ -85,6 +87,85 @@ static struct timer_list watchdog_ticktock =
  *	If the timer expires..
  */
 
+
+#define SYS_LOG_FILE "/var/log/messages"
+#define SYS_LOG_DUMP_SIZE 5*1024
+#define DUMP_BUF_SIZE 256
+char buf[DUMP_BUF_SIZE+1];
+
+static void dump_sys_log(void)
+{
+	struct file *filp, *filp_dump;
+	long file_size, read_size, size_to_read, offset_to_read, offset_to_write, write_size;
+	int i;
+//	void *buf;
+	filp = filp_open(SYS_LOG_FILE, O_RDONLY|O_LARGEFILE, 0);
+
+        if (IS_ERR(filp))
+        {
+                int ret = PTR_ERR(filp);
+                pr_crit("Unable to open'%s (err=%d)'.\n", SYS_LOG_FILE, ret);
+                return;
+        }
+#ifdef SOFTDOG_DUMP_TO_FILE
+#define SYS_LOG_SOFTDOG_DUMP "/var/local/softdog_syslog_dump"
+	filp_dump = filp_open(SYS_LOG_SOFTDOG_DUMP, O_CREAT|O_WRONLY|O_LARGEFILE, 0);
+
+        if (IS_ERR(filp_dump))
+        {
+                int ret = PTR_ERR(filp_dump);
+                pr_crit("Unable to open'%s (err=%d)'.\n", SYS_LOG_SOFTDOG_DUMP, ret);
+                return;
+        }
+#endif
+        file_size = i_size_read(file_inode(filp));
+        if ( file_size<=0 ) {
+                pr_crit("%s: invalid file size %ld\n",__func__,file_size);
+                filp_close(filp,0);
+                return;
+        }
+	size_to_read = file_size > SYS_LOG_DUMP_SIZE? SYS_LOG_DUMP_SIZE:file_size;
+	offset_to_read = file_size > SYS_LOG_DUMP_SIZE ? file_size - SYS_LOG_DUMP_SIZE : 0;
+
+        pr_crit("%s: open file (%s) ok size=%ld\n",__func__,SYS_LOG_FILE,file_size);
+
+/*
+        buf = vmalloc(2048);
+	memset(buf,0,DUMP_BUF_SIZE+1);
+        if (buf == NULL) {
+                pr_crit("%s: can't allocate memory\n",__func__);
+                return;
+        }
+*/
+	pr_crit("SYS_LOG_DUMP Begin======\n");
+	offset_to_write = 0;
+	for(i=0;i<SYS_LOG_DUMP_SIZE/DUMP_BUF_SIZE;i++) { //has to dump in small buffer, otherwise system would crash
+		memset(buf,0,DUMP_BUF_SIZE+1);
+		//read_size = kernel_read(filp, offset_to_read, buf, size_to_read);
+		size_to_read=DUMP_BUF_SIZE;
+		read_size = kernel_read(filp, offset_to_read+i*size_to_read, buf, size_to_read);
+		if (read_size != size_to_read) {
+			pr_crit( "%s: read error (got %ld)(expect %ld)\n",__func__,read_size,size_to_read);
+			return;
+		}
+#ifdef SOFTDOG_DUMP_TO_FILE
+		write_size = kernel_write(filp_dump, offset_to_write+i*size_to_read, buf, size_to_read);
+		if (write_size != size_to_read) {
+			pr_crit( "%s: write error (write %ld)(expect %ld)\n",__func__,write_size,size_to_read);
+			return;
+		}
+#endif
+		pr_crit("%s",buf);
+	}
+	pr_crit("SYS_LOG_DUMP Done======\n");
+        //fput(filp);
+        filp_close(filp, 0);
+#ifdef SOFTDOG_DUMP_TO_FILE
+        filp_close(filp_dump, 0);
+#endif
+//	vfree(buf);
+	return;
+}
 static void watchdog_fire(unsigned long data)
 {
 	if (soft_noboot)
@@ -94,6 +175,7 @@ static void watchdog_fire(unsigned long data)
 		panic("Software Watchdog Timer expired");
 	} else {
 		pr_crit("Initiating system reboot\n");
+		dump_sys_log();
 		emergency_restart();
 		pr_crit("Reboot didn't ?????\n");
 	}

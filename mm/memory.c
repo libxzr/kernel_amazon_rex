@@ -69,6 +69,10 @@
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
 
+#if defined(CONFIG_FALCON) && defined(CONFIG_CMA)
+#include <asm/falcon_syscall.h>
+#endif
+
 #include "internal.h"
 
 #ifdef LAST_CPUPID_NOT_IN_PAGE_FLAGS
@@ -1053,6 +1057,16 @@ int copy_page_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	ret = 0;
 	dst_pgd = pgd_offset(dst_mm, addr);
 	src_pgd = pgd_offset(src_mm, addr);
+
+#ifdef CONFIG_FALCON_CMA
+	{
+		extern int need_idleload;
+		extern int need_revert;
+		if(need_revert && !need_idleload)
+			bios_svc(0x34, src_mm->pgd, 0, 0, 0, 0);
+	}
+#endif
+
 	do {
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(src_pgd))
@@ -2811,8 +2825,15 @@ void do_set_pte(struct vm_area_struct *vma, unsigned long address,
 	update_mmu_cache(vma, address, pte);
 }
 
-static unsigned long fault_around_bytes __read_mostly =
-	rounddown_pow_of_two(65536);
+/*
+ * Kernel maps more pages than demand causes wasting
+ * lots of memory in each process.
+ * For instance, kernel maps at most 15 more pages of
+ * dynamic libraries and fonts which may never be used.
+ * Limit it to 0 instead of 65536.
+ */
+static unsigned long fault_around_bytes __read_mostly = 0;
+	// rounddown_pow_of_two(65536);
 
 #ifdef CONFIG_DEBUG_FS
 static int fault_around_bytes_get(void *data, u64 *val)

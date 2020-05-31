@@ -32,6 +32,9 @@
 #include <asm/traps.h>
 #include <asm/procinfo.h>
 #include <asm/memory.h>
+#ifdef CONFIG_FALCON
+#include <asm/falcon_syscall.h>
+#endif
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -1519,6 +1522,9 @@ void __init paging_init(const struct machine_desc *mdesc)
 	build_mem_type_table();
 	prepare_page_table();
 	map_lowmem();
+#ifdef CONFIG_FALCON
+	remap_falcon_lowmem();
+#endif
 	dma_contiguous_remap();
 	devicemaps_init(mdesc);
 	kmap_init();
@@ -1534,3 +1540,28 @@ void __init paging_init(const struct machine_desc *mdesc)
 	empty_zero_page = virt_to_page(zero_page);
 	__flush_dcache_page(NULL, empty_zero_page);
 }
+
+#ifdef CONFIG_FALCON
+void __init falcon_remapping(unsigned long start, unsigned long end)
+{
+	struct map_desc map;
+	pmdval_t tmp_prot_sect;
+	unsigned long addr;
+
+	map.pfn = __phys_to_pfn(__pa(start));
+	map.virtual = start;
+	map.length = end - start;
+	map.type = MT_MEMORY_RW;
+
+	tmp_prot_sect = mem_types[MT_MEMORY_RW].prot_sect;
+	mem_types[MT_MEMORY_RW].prot_sect = 0;
+
+	for (addr = start; addr < end; addr += PMD_SIZE)
+		pmd_clear(pmd_off_k(addr));
+
+	create_mapping(&map);
+
+	mem_types[MT_MEMORY_RW].prot_sect = tmp_prot_sect;
+
+}
+#endif

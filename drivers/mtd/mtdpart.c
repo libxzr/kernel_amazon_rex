@@ -379,6 +379,9 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
 
 	slave->mtd.name = name;
 	slave->mtd.owner = master->owner;
+#ifdef CONFIG_FALCON_MTD_NOR
+	slave->mtd.numeraseregions = master->numeraseregions;
+#endif
 
 	/* NOTE: Historically, we didn't arrange MTDs as a tree out of
 	 * concern for showing the same data in multiple partitions.

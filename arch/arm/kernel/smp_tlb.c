@@ -9,6 +9,9 @@
  */
 #include <linux/preempt.h>
 #include <linux/smp.h>
+#ifdef CONFIG_FALCON
+#include <linux/module.h>
+#endif
 
 #include <asm/smp_plat.h>
 #include <asm/tlbflush.h>
@@ -143,6 +146,9 @@ void flush_tlb_all(void)
 		__flush_tlb_all();
 	broadcast_tlb_a15_erratum();
 }
+#ifdef CONFIG_FALCON
+EXPORT_SYMBOL(flush_tlb_all);
+#endif
 
 void flush_tlb_mm(struct mm_struct *mm)
 {
@@ -176,6 +182,9 @@ void flush_tlb_kernel_page(unsigned long kaddr)
 		__flush_tlb_kernel_page(kaddr);
 	broadcast_tlb_a15_erratum();
 }
+#ifdef CONFIG_FALCON
+EXPORT_SYMBOL(flush_tlb_kernel_page);
+#endif
 
 void flush_tlb_range(struct vm_area_struct *vma,
                      unsigned long start, unsigned long end)

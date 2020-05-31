@@ -1,0 +1,24 @@
+/dts-v1/;
+
+/ {
+        fdts {
+                fdt@1 {
+                        platform_name = "imx6sll-rex.dtb";
+                        data = /incbin/("imx6sll-rex.dtb");
+                };
+
+                fdt@2 {
+                        platform_name = "imx6sll-moonshine-wfo.dtb";
+                        data = /incbin/("imx6sll-moonshine-wfo.dtb");
+                };
+
+                fdt@3 {
+                        platform_name = "imx6sll-moonshine-wan.dtb";
+                        data = /incbin/("imx6sll-moonshine-wan.dtb");
+                };
+                fdt@4 {
+                        platform_name = "imx6sll-jaeger-wfo.dtb";
+                        data = /incbin/("imx6sll-jaeger-wfo.dtb");
+                };
+        };
+};

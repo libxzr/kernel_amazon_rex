@@ -230,6 +230,20 @@
 
 static const char fsg_string_interface[] = "Mass Storage";
 
+#if defined(CONFIG_LAB126)
+
+#define DRIVER_MFG_STR			"Amazon"
+#define DRIVER_VENDOR_ID_STR	"Kindle"
+#define DRIVER_PRODUCT_STR		"Amazon Kindle"
+#define DRIVER_DESC				"Internal Storage"
+
+#else
+
+#define DRIVER_VENDOR_ID_STR	"Linux"
+#define DRIVER_DESC				"File-Stor Gadget"
+
+#endif
+
 #include "storage_common.h"
 #include "f_mass_storage.h"
 
@@ -319,6 +333,21 @@ struct fsg_common {
 	char inquiry_string[8 + 16 + 4 + 1];
 
 	struct kref		ref;
+	struct file     *filp;
+
+#if defined(CONFIG_LAB126)
+#define SC_KEEPALIVE_DELAY	2000 /* 2 secs */
+	struct delayed_work	synchronize_cache_work;
+	int				recovery_mode;
+
+#define ONLINE				1
+#define RESUME_PENDING		2
+#define SUSPEND_PENDING		3
+	unsigned long			common_bitflags;
+
+#define UNPLUG_SAFE   0
+#define UNPLUG_UNSAFE 1
+#endif
 };
 
 struct fsg_dev {
@@ -336,7 +365,19 @@ struct fsg_dev {
 
 	struct usb_ep		*bulk_in;
 	struct usb_ep		*bulk_out;
+#ifdef CONFIG_FSL_UTP
+	void			*utp;
+#endif
 };
+
+#ifdef CONFIG_FSL_UTP
+#include "fsl_updater.h"
+#endif
+
+#ifdef CONFIG_LAB126
+static struct fsg_common *g_fsg_common;
+static bool g_usb_charger_connected;
+#endif
 
 static inline int __fsg_is_set(struct fsg_common *common,
 			       const char *func, unsigned line)
@@ -946,6 +987,79 @@ static int do_write(struct fsg_common *common)
 	return -EIO;		/* No default reply */
 }
 
+/*-------------------------------------------------------------------------*/
+
+#if defined(CONFIG_LAB126)
+
+static inline int send_offline_uevent(struct fsg_common *common, unsigned char unplug_state)
+{
+	printk(KERN_INFO "%s:%d bitflags: 0x%02lx, unplug_state: %d, recovery_mode: %d\n", __FUNCTION__, __LINE__, common->common_bitflags, unplug_state, common->recovery_mode);
+
+	if (!common->recovery_mode) {
+		if (test_and_clear_bit(ONLINE, &common->common_bitflags)) {
+			kobject_uevent_env(&common->gadget->dev.parent->kobj, KOBJ_OFFLINE,
+				(char*[]) {unplug_state == UNPLUG_SAFE ? "UNPLUG=safe" : "UNPLUG=unsafe", NULL});
+		}
+	} else {
+		clear_bit(ONLINE, &common->common_bitflags);
+	}
+
+	return 0;
+}
+
+static inline int send_online_uevent(struct fsg_common *common)
+{
+	printk(KERN_INFO "%s:%d bitflags: 0x%02lx, recovery_mode: %d\n", __FUNCTION__, __LINE__, common->common_bitflags, common->recovery_mode);
+
+	if (!common->recovery_mode) {
+		if (!test_and_set_bit(ONLINE, &common->common_bitflags)) {
+			kobject_uevent(&common->gadget->dev.parent->kobj, KOBJ_ONLINE);
+		}
+	} else {
+		set_bit(ONLINE, &common->common_bitflags);
+	}
+
+	return 0;
+}
+
+static void do_synchronize_cache_work(struct work_struct *work)
+{
+	struct fsg_common *common =
+		container_of(work, struct fsg_common, synchronize_cache_work.work);
+	struct fsg_lun **curlun_it = common->luns;
+	struct fsg_lun	*curlun = NULL;
+	unsigned i = 0;
+
+	pr_info("Disconnect....\n");
+
+	spin_lock_irq(&common->lock);
+	if (common->state == FSG_STATE_DATA_PHASE) {
+		/* Driver stuck at reading/writing data */
+		common->running = 0;
+		if (common->thread_task) {
+			send_sig_info(SIGUSR1, SEND_SIG_FORCED, common->thread_task);
+		}
+	}
+	spin_unlock_irq(&common->lock);
+
+	/* Shut down the backing file, flush cache for file system consistency */
+	down_write(&common->filesem);
+	for (i = common->nluns; i--; ++curlun_it) {
+		curlun = *curlun_it;
+		if (!curlun || !fsg_lun_is_open(curlun))
+			continue;
+
+		fsg_lun_close(curlun);
+		curlun->sense_data = SS_NO_SENSE;
+		curlun->unit_attention_data = SS_NO_SENSE;
+		curlun->sense_data_info = 0;
+	}
+	up_write(&common->filesem);
+
+	common->filp = NULL;
+	send_offline_uevent(common, UNPLUG_UNSAFE);
+}
+#endif
 
 /*-------------------------------------------------------------------------*/
 
@@ -959,6 +1073,12 @@ static int do_synchronize_cache(struct fsg_common *common)
 	rc = fsg_lun_fsync_sub(curlun);
 	if (rc)
 		curlun->sense_data = SS_WRITE_ERROR;
+
+#if defined(CONFIG_LAB126)
+	cancel_delayed_work(&common->synchronize_cache_work);
+	schedule_delayed_work(&common->synchronize_cache_work, msecs_to_jiffies(SC_KEEPALIVE_DELAY));
+#endif
+
 	return 0;
 }
 
@@ -1131,6 +1251,13 @@ static int do_request_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 	}
 #endif
 
+#ifdef CONFIG_FSL_UTP
+	if (utp_get_sense(common->fsg) == 0) {  /* got the sense from the UTP */
+		sd = UTP_CTX(common->fsg)->sd;
+		sdinfo = UTP_CTX(common->fsg)->sdinfo;
+		valid = 0;
+	} else
+#endif
 	if (!curlun) {		/* Unsupported LUNs are okay */
 		common->bad_lun_okay = 1;
 		sd = SS_LOGICAL_UNIT_NOT_SUPPORTED;
@@ -1152,6 +1279,9 @@ static int do_request_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 	buf[7] = 18 - 8;			/* Additional sense length */
 	buf[12] = ASC(sd);
 	buf[13] = ASCQ(sd);
+#ifdef CONFIG_FSL_UTP
+	put_unaligned_be32(UTP_CTX(common->fsg)->sdinfo_h, &buf[8]);
+#endif
 	return 18;
 }
 
@@ -1333,6 +1463,10 @@ static int do_start_stop(struct fsg_common *common)
 	 * available for use as soon as it is loaded.
 	 */
 	if (start) {
+#if defined(CONFIG_LAB126)
+		cancel_delayed_work_sync(&common->synchronize_cache_work);
+		send_online_uevent(common);
+#endif
 		if (!fsg_lun_is_open(curlun)) {
 			curlun->sense_data = SS_MEDIUM_NOT_PRESENT;
 			return -EINVAL;
@@ -1350,11 +1484,21 @@ static int do_start_stop(struct fsg_common *common)
 	if (!loej)
 		return 0;
 
+#if defined(CONFIG_LAB126)
+	cancel_delayed_work(&common->synchronize_cache_work);
+#endif
+
 	up_read(&common->filesem);
 	down_write(&common->filesem);
 	fsg_lun_close(curlun);
 	up_write(&common->filesem);
 	down_read(&common->filesem);
+
+#ifdef CONFIG_LAB126
+	pr_info("Eject....\n");
+	common->filp = NULL;
+	send_offline_uevent(common, UNPLUG_SAFE);
+#endif
 
 	return 0;
 }
@@ -1645,7 +1789,18 @@ static int send_status(struct fsg_common *common)
 		sd = SS_INVALID_COMMAND;
 	} else if (sd != SS_NO_SENSE) {
 		DBG(common, "sending command-failure status\n");
+#ifdef CONFIG_FSL_UTP
+/*
+ * mfgtool host frequently reset bus during transfer
+ *  - the response in csw to request sense will be 1 due to UTP change
+ *    some storage information
+ *  - host will reset the bus if response to request sense is 1
+ *  - change the response to 0 if CONFIG_FSL_UTP is defined
+ */
+		status = US_BULK_STAT_OK;
+#else
 		status = US_BULK_STAT_FAIL;
+#endif
 		VDBG(common, "  sense data: SK x%02x, ASC x%02x, ASCQ x%02x;"
 				"  info x%x\n",
 				SK(sd), ASC(sd), ASCQ(sd), sdinfo);
@@ -1822,6 +1977,7 @@ static int do_scsi_command(struct fsg_common *common)
 	int			reply = -EINVAL;
 	int			i;
 	static char		unknown[16];
+	static u8   last_cmd = 0;
 
 	dump_cdb(common);
 
@@ -1835,6 +1991,32 @@ static int do_scsi_command(struct fsg_common *common)
 	}
 	common->phase_error = 0;
 	common->short_packet_received = 0;
+
+#ifdef CONFIG_FSL_UTP
+	reply = utp_handle_message(common->fsg, common->cmnd, reply);
+
+	if (reply != -EINVAL)
+		return reply;
+#endif
+
+#if defined(CONFIG_LAB126)
+	/*
+	 * Windows 7 Taskbar eject behaves badly.
+	 * Sometimes it sends only SYNCHRONIZE_CACHE and then do nothing.
+	 * Sometimes it sends SYNCHRONIZE_CACHE followed by TEST_UNIT_READY and then do nothing.
+	 * In those cases, we don't know device is ejected.
+	 * So trigger a timer in SYNCHRONIZE_CACHE handler to notify daemon.
+	 */
+	if ((last_cmd == SYNCHRONIZE_CACHE) && (common->cmnd[0] == TEST_UNIT_READY)) {
+		/* Don't cancel the timer since commands match the pattern */
+	} else {
+		/* Cancel the timer when receive regular commands */
+		if (delayed_work_pending(&common->synchronize_cache_work)) {
+			cancel_delayed_work(&common->synchronize_cache_work);
+		}
+	}
+	last_cmd = common->cmnd[0];
+#endif
 
 	down_read(&common->filesem);	/* We're using the backing file */
 	switch (common->cmnd[0]) {
@@ -2257,6 +2439,21 @@ reset:
 			fsg->bulk_out_enabled = 0;
 		}
 
+#ifdef CONFIG_LAB126
+		if (!new_fsg || rc) {
+			cancel_delayed_work_sync(&common->synchronize_cache_work);
+
+			/*
+			 * Windows 7 Taskbar eject will sometimes
+			 * SYNCHRONIZE_CACHE and then immediately disconnect
+			 * (without suspend). Make sure userspace knows we're
+			 * offline.
+			 */
+			send_offline_uevent(common, common->cmnd[0] ==
+				SYNCHRONIZE_CACHE ? UNPLUG_SAFE : UNPLUG_UNSAFE);
+		}
+#endif
+
 		common->fsg = NULL;
 		wake_up(&common->fsg_wait);
 	}
@@ -2311,6 +2508,13 @@ reset:
 		if (common->luns[i])
 			common->luns[i]->unit_attention_data =
 				SS_RESET_OCCURRED;
+
+#if defined(CONFIG_LAB126)
+	if (new_fsg) {
+		send_online_uevent(common);
+	}
+#endif
+
 	return rc;
 }
 
@@ -2502,12 +2706,14 @@ static int fsg_main_thread(void *common_)
 	/* Allow the thread to be frozen */
 	set_freezable();
 
+#ifndef CONFIG_FSL_UTP
 	/*
 	 * Arrange for userspace references to be interpreted as kernel
 	 * pointers.  That way we can pass a kernel pointer to a routine
 	 * that expects a __user pointer and it will work okay.
 	 */
 	set_fs(get_ds());
+#endif
 
 	/* The main loop */
 	while (common->state != FSG_STATE_TERMINATED) {
@@ -2515,6 +2721,17 @@ static int fsg_main_thread(void *common_)
 			handle_exception(common);
 			continue;
 		}
+
+#if defined(CONFIG_LAB126)
+		if (test_and_clear_bit(RESUME_PENDING, &common->common_bitflags)) {
+			// We could still end up processing a stale resume event here, since
+			// fsg_disconnect happens as an exception and doesn't clear suspend/resume flags.
+			// Don't send 'online' events if gadget is clearly not online.
+			if (common->fsg != NULL) {
+				send_online_uevent(common);
+			}
+		}
+#endif
 
 		if (!common->running) {
 			sleep_thread(common, true);
@@ -2624,6 +2841,31 @@ static ssize_t file_store(struct device *dev, struct device_attribute *attr,
 	return fsg_store_file(curlun, filesem, buf, count);
 }
 
+#ifdef CONFIG_LAB126
+static ssize_t online_show(struct device *dev, struct device_attribute *attr,
+			 char *buf)
+{
+	struct rw_semaphore	*filesem = dev_get_drvdata(dev);
+	struct fsg_common	*common =
+		container_of(filesem, struct fsg_common, filesem);
+
+	if (common->fsg != NULL)
+		return sprintf(buf, "%d\n", test_bit(ONLINE, &common->common_bitflags));
+	else
+		return sprintf(buf, "%d\n", 0);
+}
+
+static ssize_t online_store(struct device *dev, struct device_attribute *attr,
+			   const char *buf, size_t count)
+{
+	printk(KERN_ERR "%s:%d, online=%c\n", __FUNCTION__, __LINE__, buf[0]);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(online);
+#endif
+
 static DEVICE_ATTR_RW(nofua);
 /* mode wil be set in fsg_lun_attr_is_visible() */
 static DEVICE_ATTR(ro, 0, ro_show, ro_store);
@@ -2677,8 +2919,34 @@ static struct fsg_common *fsg_common_setup(struct fsg_common *common)
 	init_waitqueue_head(&common->fsg_wait);
 	common->state = FSG_STATE_TERMINATED;
 
+#ifdef CONFIG_LAB126
+	g_fsg_common = common;
+#endif
+
 	return common;
 }
+
+#ifdef CONFIG_LAB126
+static void fsg_sync_cache(bool connected)
+{
+	g_usb_charger_connected = connected;
+
+	if (!g_fsg_common) {
+		pr_err("g_fsg_common = null.....\n");
+	} else if (connected) {
+		if (g_fsg_common->curlun) {
+			cancel_delayed_work(&g_fsg_common->synchronize_cache_work);
+			if (g_fsg_common->curlun->filp == NULL)
+				g_fsg_common->curlun->filp = g_fsg_common->filp;
+		}
+	} else {
+		if (g_fsg_common->curlun) {
+			cancel_delayed_work(&g_fsg_common->synchronize_cache_work);
+			schedule_delayed_work(&g_fsg_common->synchronize_cache_work, msecs_to_jiffies(SC_KEEPALIVE_DELAY));
+		}
+	}
+}
+#endif
 
 void fsg_common_set_sysfs(struct fsg_common *common, bool sysfs)
 {
@@ -2846,6 +3114,9 @@ static struct attribute *fsg_lun_dev_attrs[] = {
 	&dev_attr_ro.attr,
 	&dev_attr_file.attr,
 	&dev_attr_nofua.attr,
+#ifdef CONFIG_LAB126
+	&dev_attr_online.attr,
+#endif
 	NULL
 };
 
@@ -2945,7 +3216,9 @@ int fsg_common_create_lun(struct fsg_common *common, struct fsg_lun_config *cfg,
 	      lun->cdrom ? "CD-ROM " : "",
 	      p);
 	kfree(pathbuf);
-
+#ifdef CONFIG_LAB126
+    common->filp = lun->filp;
+#endif
 	return 0;
 
 error_lun:
@@ -2973,6 +3246,10 @@ int fsg_common_create_luns(struct fsg_common *common, struct fsg_config *cfg)
 
 	pr_info("Number of LUNs=%d\n", common->nluns);
 
+#if defined(CONFIG_LAB126)
+	common->recovery_mode = cfg->recovery_mode;
+#endif
+
 	return 0;
 
 fail:
@@ -2989,11 +3266,11 @@ void fsg_common_set_inquiry_string(struct fsg_common *common, const char *vn,
 	/* Prepare inquiryString */
 	i = get_default_bcdDevice();
 	snprintf(common->inquiry_string, sizeof(common->inquiry_string),
-		 "%-8s%-16s%04x", vn ?: "Linux",
+		"%-8s%-16s%04x", vn ?: DRIVER_VENDOR_ID_STR,
 		 /* Assume product name dependent on the first LUN */
 		 pn ?: ((*common->luns)->cdrom
 		     ? "File-CD Gadget"
-		     : "File-Stor Gadget"),
+		     : DRIVER_DESC),
 		 i);
 }
 EXPORT_SYMBOL_GPL(fsg_common_set_inquiry_string);
@@ -3046,12 +3323,28 @@ static void fsg_common_release(struct kref *ref)
 	}
 
 	_fsg_common_free_buffers(common->buffhds, common->fsg_num_buffers);
-	if (common->free_storage_on_release)
+	if (common->free_storage_on_release) {
+#ifdef CONFIG_LAB126
+		cancel_delayed_work_sync(&common->synchronize_cache_work);
+		send_offline_uevent(common, UNPLUG_UNSAFE);
+
+		if (g_fsg_common == common) {
+			g_fsg_common = NULL;
+		}
+#endif
 		kfree(common);
+	}
 }
 
-
 /*-------------------------------------------------------------------------*/
+
+#ifdef CONFIG_FSL_UTP
+#include "fsl_updater.c"
+#endif
+
+#ifdef CONFIG_USB_REX
+void max14656_set_ums_cb(void (*func)(bool connected));
+#endif /* CONFIG_USB_REX */
 
 static int fsg_bind(struct usb_configuration *c, struct usb_function *f)
 {
@@ -3083,6 +3376,10 @@ static int fsg_bind(struct usb_configuration *c, struct usb_function *f)
 		return i;
 	fsg_intf_desc.bInterfaceNumber = i;
 	fsg->interface_number = i;
+
+#ifdef CONFIG_FSL_UTP
+	utp_init(fsg);
+#endif
 
 	/* Find all the endpoints we will use */
 	ep = usb_ep_autoconfig(gadget, &fsg_fs_bulk_in_desc);
@@ -3119,6 +3416,15 @@ static int fsg_bind(struct usb_configuration *c, struct usb_function *f)
 	if (ret)
 		goto autoconf_fail;
 
+#ifdef CONFIG_LAB126
+	INIT_DELAYED_WORK(&fsg->common->synchronize_cache_work, do_synchronize_cache_work);
+
+#ifdef CONFIG_USB_REX
+	/* set up call back after binding fsg*/
+	max14656_set_ums_cb(fsg_sync_cache);
+#endif /* CONFIG_USB_REX */
+#endif
+
 	return 0;
 
 autoconf_fail:
@@ -3134,6 +3440,11 @@ static void fsg_unbind(struct usb_configuration *c, struct usb_function *f)
 	struct fsg_common	*common = fsg->common;
 
 	DBG(fsg, "unbind\n");
+
+#ifdef CONFIG_USB_REX
+	max14656_set_ums_cb(NULL);
+#endif /* CONFIG_USB_REX */
+
 	if (fsg->common->fsg == fsg) {
 		fsg->common->new_fsg = NULL;
 		raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE);
@@ -3142,7 +3453,79 @@ static void fsg_unbind(struct usb_configuration *c, struct usb_function *f)
 	}
 
 	usb_free_all_descriptors(&fsg->function);
+
+#ifdef CONFIG_FSL_UTP
+	utp_exit(fsg);
+#endif
+
 }
+
+#if defined(CONFIG_LAB126)
+
+static void fsg_suspend(struct usb_function *f)
+{
+	struct fsg_dev		*fsg = fsg_from_func(f);
+
+#ifdef CONFIG_LAB126
+	printk(KERN_ERR "%s:%d\n", __FUNCTION__, __LINE__);
+#endif
+
+	if (fsg != NULL) {
+		set_bit(SUSPEND_PENDING, &fsg->common->common_bitflags);
+		clear_bit(RESUME_PENDING, &fsg->common->common_bitflags);
+
+#if defined(CONFIG_LAB126)
+		cancel_delayed_work(&fsg->common->synchronize_cache_work);
+		schedule_delayed_work(&fsg->common->synchronize_cache_work, msecs_to_jiffies(SC_KEEPALIVE_DELAY));
+#endif
+
+		/* If the last command we got before the suspend signal was to
+		 * SYNCHRONIZE_CACHE, then we're going to guess that we're talking to
+		 * Windows XP or Windows 8 and what our host *actually* wants is to
+		 * disconnect.  This behavior happens when the user ejects the device from
+		 * the task bar. */
+		switch (fsg->common->cmnd[0]) {
+
+		case SYNCHRONIZE_CACHE:
+			INFO(fsg, "Guessing that we were ejected from the Windows taskbar\n");
+			break;
+
+		case TEST_UNIT_READY:
+			/* Windows XP sometimes sends a random TEST_UNIT_READY after suspend
+			 * when we're ejected from the task bar.  We'll ignore it just this
+			 * once. */
+			DBG(fsg, "%s:%d fsg->cmnd[0] == TEST_UNIT_READY\n", __func__, __LINE__);
+			break;
+
+		default:
+			break;
+		}
+	}
+}
+
+static void fsg_resume(struct usb_function *f)
+{
+	struct fsg_dev		*fsg = fsg_from_func(f);
+
+#ifdef CONFIG_LAB126
+	printk(KERN_ERR "%s:%d\n", __FUNCTION__, __LINE__);
+#endif
+
+	if (fsg != NULL) {
+		/*
+		 * The platform doesn't properly reattach to USB hosts going from
+		 * suspend to resume when the USB bus remains under power.
+		 * This makes sure the resume event is raise through the device stack.
+		 */
+
+		cancel_delayed_work(&fsg->common->synchronize_cache_work);
+		set_bit(RESUME_PENDING, &fsg->common->common_bitflags);
+		clear_bit(SUSPEND_PENDING, &fsg->common->common_bitflags);
+		wakeup_thread(fsg->common);
+	}
+}
+
+#endif
 
 static inline struct fsg_lun_opts *to_fsg_lun_opts(struct config_item *item)
 {
@@ -3266,12 +3649,40 @@ static struct fsg_lun_opts_attribute fsg_lun_opts_nofua =
 	__CONFIGFS_ATTR(nofua, S_IRUGO | S_IWUSR, fsg_lun_opts_nofua_show,
 			fsg_lun_opts_nofua_store);
 
+#ifdef CONFIG_LAB126
+static ssize_t fsg_lun_opts_online_show(struct fsg_lun_opts *opts, char *page)
+{
+	struct fsg_opts *fsg_opts;
+
+	fsg_opts = to_fsg_opts(opts->group.cg_item.ci_parent);
+
+	if (fsg_opts->common->fsg != NULL)
+		return sprintf(page, "%d\n", test_bit(ONLINE, &fsg_opts->common->common_bitflags));
+	else
+		return sprintf(page, "%d\n", 0);
+}
+
+static ssize_t fsg_lun_opts_online_store(struct fsg_lun_opts *opts,
+				       const char *page, size_t len)
+{
+	printk(KERN_ERR "%s:%d, online=%c\n", __FUNCTION__, __LINE__, page[0]);
+	return len;
+}
+
+static struct fsg_lun_opts_attribute fsg_lun_opts_online =
+	__CONFIGFS_ATTR(online, S_IRUGO | S_IWUSR, fsg_lun_opts_online_show,
+			fsg_lun_opts_online_store);
+#endif
+
 static struct configfs_attribute *fsg_lun_attrs[] = {
 	&fsg_lun_opts_file.attr,
 	&fsg_lun_opts_ro.attr,
 	&fsg_lun_opts_removable.attr,
 	&fsg_lun_opts_cdrom.attr,
 	&fsg_lun_opts_nofua.attr,
+#ifdef CONFIG_LAB126
+	&fsg_lun_opts_online.attr,
+#endif
 	NULL,
 };
 
@@ -3589,6 +4000,11 @@ static struct usb_function *fsg_alloc(struct usb_function_instance *fi)
 	fsg->function.disable	= fsg_disable;
 	fsg->function.free_func	= fsg_free;
 
+#if defined(CONFIG_LAB126)
+	fsg->function.suspend     = fsg_suspend;
+	fsg->function.resume      = fsg_resume;
+#endif
+
 	fsg->common               = common;
 
 	return &fsg->function;
@@ -3632,5 +4048,9 @@ void fsg_config_from_params(struct fsg_config *cfg,
 	/* Finalise */
 	cfg->can_stall = params->stall;
 	cfg->fsg_num_buffers = fsg_num_buffers;
+
+#if defined(CONFIG_LAB126)
+	cfg->recovery_mode = params->recovery_mode;
+#endif
 }
 EXPORT_SYMBOL_GPL(fsg_config_from_params);

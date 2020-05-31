@@ -55,11 +55,28 @@ extern long do_no_restart_syscall(struct restart_block *parm);
 
 #ifdef __KERNEL__
 
+#if defined(CONFIG_TOI)
+
+#ifdef CONFIG_DEBUG_STACK_USAGE
+# define THREADINFO_GFP		(GFP_KERNEL | __GFP_NOTRACK | ___GFP_TOI_NOTRACK | __GFP_ZERO)
+#else
+# define THREADINFO_GFP		(GFP_KERNEL | __GFP_NOTRACK | ___GFP_TOI_NOTRACK)
+#endif
+
+#else /* !CONFIG_TOI */
+
 #ifdef CONFIG_DEBUG_STACK_USAGE
 # define THREADINFO_GFP		(GFP_KERNEL | __GFP_NOTRACK | __GFP_ZERO)
 #else
 # define THREADINFO_GFP		(GFP_KERNEL | __GFP_NOTRACK)
 #endif
+
+
+#endif /* CONFIG_TOI */
+
+
+
+
 
 /*
  * flag set/clear/test wrappers

@@ -1,0 +1,9 @@
+menu "Lab126 misc utils"
+
+config LAB_UTILS
+	bool "Lab126 MISC UTILS"
+	default y
+	help
+	  Select this option to run lab utils
+
+endmenu

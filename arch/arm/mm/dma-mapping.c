@@ -913,6 +913,9 @@ int arm_dma_map_sg(struct device *dev, struct scatterlist *sg, int nents,
 						s->length, dir, attrs);
 		if (dma_mapping_error(dev, s->dma_address))
 			goto bad_mapping;
+#ifdef CONFIG_FALCON
+		falcon_set_preload(s->dma_address, (PAGE_ALIGN(s->length) >> PAGE_SHIFT));
+#endif
 	}
 	return nents;
 
@@ -940,8 +943,16 @@ void arm_dma_unmap_sg(struct device *dev, struct scatterlist *sg, int nents,
 
 	int i;
 
+#ifndef CONFIG_FALCON
 	for_each_sg(sg, s, nents, i)
 		ops->unmap_page(dev, sg_dma_address(s), sg_dma_len(s), dir, attrs);
+#else
+	for_each_sg(sg, s, nents, i) {
+		falcon_clr_preload(sg_dma_address(s),(PAGE_ALIGN(sg_dma_len(s)) >> PAGE_SHIFT));
+		ops->unmap_page(dev, sg_dma_address(s), sg_dma_len(s),
+				dir, attrs);
+	}
+#endif
 }
 
 /**

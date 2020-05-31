@@ -125,6 +125,9 @@ static int pcpu_nr_units __read_mostly;
 static int pcpu_atom_size __read_mostly;
 static int pcpu_nr_slots __read_mostly;
 static size_t pcpu_chunk_struct_size __read_mostly;
+#if defined(CONFIG_TOI)
+static int pcpu_pfns;
+#endif
 
 /* cpus with the lowest and highest unit addresses */
 static unsigned int pcpu_low_unit_cpu __read_mostly;
@@ -1795,6 +1798,9 @@ static struct pcpu_alloc_info * __init pcpu_build_alloc_info(
 	/* calculate size_sum and ensure dyn_size is enough for early alloc */
 	size_sum = PFN_ALIGN(static_size + reserved_size +
 			    max_t(size_t, dyn_size, PERCPU_DYNAMIC_EARLY_SIZE));
+#if defined(CONFIG_TOI)
+        pcpu_pfns = PFN_DOWN(size_sum);
+#endif
 	dyn_size = size_sum - static_size - reserved_size;
 
 	/*
@@ -2281,6 +2287,22 @@ void __init percpu_init_late(void)
 		spin_unlock_irqrestore(&pcpu_lock, flags);
 	}
 }
+
+#ifdef CONFIG_TOI_INCREMENTAL
+/*
+ * It doesn't matter if we mark an extra page as untracked (and therefore
+ * always save it in incremental images).
+ */
+void toi_mark_per_cpus_pages_untracked(void)
+{
+    int i;
+
+    struct page *page = virt_to_page(pcpu_base_addr);
+
+    for (i = 0; i < pcpu_pfns; i++)
+        SetPageTOI_Untracked(page + i);
+}
+#endif
 
 /*
  * Percpu allocator is initialized early during boot when neither slab or

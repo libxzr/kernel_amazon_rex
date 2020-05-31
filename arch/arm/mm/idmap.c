@@ -15,6 +15,7 @@
  * page tables.
  */
 pgd_t *idmap_pgd;
+EXPORT_SYMBOL(idmap_pgd);
 phys_addr_t (*arch_virt_to_idmap) (unsigned long x);
 
 #ifdef CONFIG_ARM_LPAE

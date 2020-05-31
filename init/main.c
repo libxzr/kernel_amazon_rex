@@ -657,6 +657,10 @@ asmlinkage __visible void __init start_kernel(void)
 	page_writeback_init();
 	proc_root_init();
 	nsfs_init();
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
+	extern void setup_printk_proc(void);
+	setup_printk_proc();
+#endif
 	cpuset_init();
 	cgroup_init();
 	taskstats_init_early();

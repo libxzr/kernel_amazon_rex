@@ -33,8 +33,20 @@
 #include <linux/module.h>
 
 /*-------------------------------------------------------------------------*/
+#if defined(CONFIG_LAB126)
 
-#define DRIVER_DESC		"Mass Storage Gadget"
+#define DRIVER_MFG_STR			"Amazon"
+#define DRIVER_VENDOR_ID_STR	"Kindle"
+#define DRIVER_PRODUCT_STR		"Amazon Kindle"
+#define DRIVER_DESC				"Internal Storage"
+
+#else
+
+#define DRIVER_MFG_STR			""
+#define DRIVER_DESC				"Mass Storage Gadget"
+
+#endif
+
 #define DRIVER_VERSION		"2009/09/11"
 
 /*
@@ -64,24 +76,10 @@ static struct usb_device_descriptor msg_device_desc = {
 	.bNumConfigurations =	1,
 };
 
-static struct usb_otg_descriptor otg_descriptor = {
-	.bLength =		sizeof otg_descriptor,
-	.bDescriptorType =	USB_DT_OTG,
-
-	/*
-	 * REVISIT SRP-only hardware is possible, although
-	 * it would not be called "OTG" ...
-	 */
-	.bmAttributes =		USB_OTG_SRP | USB_OTG_HNP,
-};
-
-static const struct usb_descriptor_header *otg_desc[] = {
-	(struct usb_descriptor_header *) &otg_descriptor,
-	NULL,
-};
+static const struct usb_descriptor_header *otg_desc[2];
 
 static struct usb_string strings_dev[] = {
-	[USB_GADGET_MANUFACTURER_IDX].s = "",
+	[USB_GADGET_MANUFACTURER_IDX].s = DRIVER_MFG_STR,
 	[USB_GADGET_PRODUCT_IDX].s = DRIVER_DESC,
 	[USB_GADGET_SERIAL_IDX].s = "",
 	{  } /* end of list */
@@ -120,6 +118,13 @@ static unsigned int fsg_num_buffers = CONFIG_USB_GADGET_STORAGE_NUM_BUFFERS;
 #endif /* CONFIG_USB_GADGET_DEBUG_FILES */
 
 FSG_MODULE_PARAMETERS(/* no prefix */, mod_data);
+
+#if defined(CONFIG_LAB126)
+#ifdef MODULE
+module_param_named(recovery_mode, mod_data.recovery_mode, int, S_IRUGO);
+MODULE_PARM_DESC(recovery_mode, "recovery util mode");
+#endif
+#endif
 
 static unsigned long msg_registered;
 static void msg_cleanup(void);
@@ -169,6 +174,9 @@ static struct usb_configuration msg_config_driver = {
 
 
 /****************************** Gadget Bind ******************************/
+#if defined(CONFIG_LAB126)
+extern char idme_serial_value[];
+#endif
 
 static int msg_bind(struct usb_composite_dev *cdev)
 {
@@ -214,9 +222,25 @@ static int msg_bind(struct usb_composite_dev *cdev)
 		goto fail_string_ids;
 	msg_device_desc.iProduct = strings_dev[USB_GADGET_PRODUCT_IDX].id;
 
+#if defined(CONFIG_LAB126)
+	strings_dev[USB_GADGET_SERIAL_IDX].s = idme_serial_value;
+	msg_device_desc.iSerialNumber = strings_dev[USB_GADGET_SERIAL_IDX].id;
+#endif
+
+	if (gadget_is_otg(cdev->gadget) && !otg_desc[0]) {
+		struct usb_descriptor_header *usb_desc;
+
+		usb_desc = usb_otg_descriptor_alloc(cdev->gadget);
+		if (!usb_desc)
+			goto fail_string_ids;
+		usb_otg_descriptor_init(cdev->gadget, usb_desc);
+		otg_desc[0] = usb_desc;
+		otg_desc[1] = NULL;
+	}
+
 	status = usb_add_config(cdev, &msg_config_driver, msg_do_config);
 	if (status < 0)
-		goto fail_string_ids;
+		goto fail_otg_desc;
 
 	usb_composite_overwrite_options(cdev, &coverwrite);
 	dev_info(&cdev->gadget->dev,
@@ -224,6 +248,9 @@ static int msg_bind(struct usb_composite_dev *cdev)
 	set_bit(0, &msg_registered);
 	return 0;
 
+fail_otg_desc:
+	kfree(otg_desc[0]);
+	otg_desc[0] = NULL;
 fail_string_ids:
 	fsg_common_remove_luns(opts->common);
 fail_set_cdev:
@@ -242,6 +269,9 @@ static int msg_unbind(struct usb_composite_dev *cdev)
 
 	if (!IS_ERR(fi_msg))
 		usb_put_function_instance(fi_msg);
+
+	kfree(otg_desc[0]);
+	otg_desc[0] = NULL;
 
 	return 0;
 }

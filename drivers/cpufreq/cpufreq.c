@@ -53,6 +53,7 @@ static DEFINE_PER_CPU(struct cpufreq_policy *, cpufreq_cpu_data_fallback);
 static DEFINE_RWLOCK(cpufreq_driver_lock);
 DEFINE_MUTEX(cpufreq_governor_lock);
 
+
 /* This one keeps track of the previously set governor of a removed CPU */
 static DEFINE_PER_CPU(char[CPUFREQ_NAME_LEN], cpufreq_cpu_governor);
 
@@ -585,6 +586,10 @@ static ssize_t show_scaling_governor(struct cpufreq_policy *policy, char *buf)
 	return -EINVAL;
 }
 
+#ifdef CONFIG_LAB126
+DEFINE_MUTEX(sysfs_performance_governor_lock);
+volatile static int perf_gov_count;
+#endif
 /**
  * store_scaling_governor - store policy for the specified CPU
  */
@@ -603,14 +608,39 @@ static ssize_t store_scaling_governor(struct cpufreq_policy *policy,
 	if (ret != 1)
 		return -EINVAL;
 
+#ifdef CONFIG_LAB126
+    mutex_lock(&sysfs_performance_governor_lock);
+    if (!strncasecmp(str_governor, "performance", CPUFREQ_NAME_LEN))
+        perf_gov_count ++;
+    else if (perf_gov_count) {
+        perf_gov_count --;
+        pr_debug("Performance gov: perf_gov_count=%d\n", perf_gov_count);
+        if (perf_gov_count) {
+            mutex_unlock(&sysfs_performance_governor_lock);
+            return count;
+        }
+    }
+#endif
+
 	if (cpufreq_parse_governor(str_governor, &new_policy.policy,
 						&new_policy.governor))
+#ifdef CONFIG_LAB126
+	{
+		mutex_unlock(&sysfs_performance_governor_lock);
+#endif
 		return -EINVAL;
+#ifdef CONFIG_LAB126
+	}
+#endif
 
 	ret = cpufreq_set_policy(policy, &new_policy);
 
 	policy->user_policy.policy = policy->policy;
 	policy->user_policy.governor = policy->governor;
+
+#ifdef CONFIG_LAB126
+	mutex_unlock(&sysfs_performance_governor_lock);
+#endif
 
 	if (ret)
 		return ret;
@@ -1567,6 +1597,7 @@ static unsigned int __cpufreq_get(struct cpufreq_policy *policy)
 
 	ret_freq = cpufreq_driver->get(policy->cpu);
 
+#ifndef CONFIG_LAB126 
 	if (ret_freq && policy->cur &&
 		!(cpufreq_driver->flags & CPUFREQ_CONST_LOOPS)) {
 		/* verify no discrepancy between actual and
@@ -1576,6 +1607,7 @@ static unsigned int __cpufreq_get(struct cpufreq_policy *policy)
 			schedule_work(&policy->update);
 		}
 	}
+#endif
 
 	return ret_freq;
 }
@@ -1602,6 +1634,36 @@ unsigned int cpufreq_get(unsigned int cpu)
 	return ret_freq;
 }
 EXPORT_SYMBOL(cpufreq_get);
+
+#ifdef CONFIG_CPU_FREQ_OVERRIDE_LAB126
+/* Lab126: Call the driver override */
+unsigned int cpufreq_override(unsigned int is_override)
+{
+	int cpu;
+	struct cpufreq_policy *policy;
+
+	/*
+	   Require the "sysfs_performance_governor_lock" to lock and prevent
+	   user space changing the gorvernor mode to performance mode
+	   while override call is executing.
+	*/
+	mutex_lock(&sysfs_performance_governor_lock);
+
+	for_each_possible_cpu(cpu) {
+		policy = cpufreq_cpu_get(cpu);
+		if (!policy)
+			continue;
+		if (policy->governor->override)
+			policy->governor->override(policy, is_override);
+		cpufreq_cpu_put(policy);
+	}
+
+	mutex_unlock(&sysfs_performance_governor_lock);
+
+	return 0;
+}
+EXPORT_SYMBOL(cpufreq_override);
+#endif
 
 static struct subsys_interface cpufreq_interface = {
 	.name		= "cpufreq",
@@ -2188,6 +2250,7 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 
 	policy->min = new_policy->min;
 	policy->max = new_policy->max;
+	trace_cpu_frequency_limits(policy->max, policy->min, policy->cpu);
 
 	pr_debug("new min and max freqs are %u - %u kHz\n",
 		 policy->min, policy->max);

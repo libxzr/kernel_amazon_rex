@@ -851,6 +851,12 @@ config GPIO_WM8994
 	  Say yes here to access the GPIO signals of WM8994 audio hub
 	  CODECs from Wolfson Microelectronics.
 
+config GPIO_BD71827
+	tristate "BD71827 GPO"
+	depends on MFD_BD71827
+	help
+	  Say yes here to access the GPO signals of bd71827 chip from ROHM.
+
 endmenu
 
 menu "PCI GPIO expanders"

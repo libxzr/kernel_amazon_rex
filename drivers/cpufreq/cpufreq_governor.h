@@ -177,6 +177,13 @@ struct od_dbs_tuners {
 	unsigned int up_threshold;
 	unsigned int powersave_bias;
 	unsigned int io_is_busy;
+#ifdef CONFIG_CPU_FREQ_OVERRIDE_LAB126
+	unsigned int override;
+	unsigned int override_delay;
+	unsigned int override_grace_delay;
+	unsigned int override_up_threshold;
+	unsigned long override_timeout;
+#endif
 };
 
 struct cs_dbs_tuners {

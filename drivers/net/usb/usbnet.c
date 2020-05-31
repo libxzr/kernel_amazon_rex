@@ -382,6 +382,7 @@ int usbnet_change_mtu (struct net_device *net, int new_mtu)
 
 	if (new_mtu <= 0)
 		return -EINVAL;
+
 	// no second zero-length packet read wanted after mtu-sized packets
 	if ((ll_mtu % dev->maxpacket) == 0)
 		return -EDOM;
@@ -390,8 +391,16 @@ int usbnet_change_mtu (struct net_device *net, int new_mtu)
 	dev->hard_mtu = net->mtu + net->hard_header_len;
 	if (dev->rx_urb_size == old_hard_mtu) {
 		dev->rx_urb_size = dev->hard_mtu;
+#ifdef CONFIG_USB_NET_REX_WAN
+		if (dev->rx_urb_size > old_rx_urb_size) {
+			usbnet_pause_rx(dev);
+			usbnet_unlink_rx_urbs(dev);
+			usbnet_resume_rx(dev);
+		}
+#else
 		if (dev->rx_urb_size > old_rx_urb_size)
 			usbnet_unlink_rx_urbs(dev);
+#endif
 	}
 
 	/* max qlen depend on hard_mtu and rx_urb_size */
@@ -424,6 +433,24 @@ static enum skb_state defer_bh(struct usbnet *dev, struct sk_buff *skb,
 	enum skb_state 		old_state;
 	struct skb_data *entry = (struct skb_data *) skb->cb;
 
+#ifdef CONFIG_USB_NET_REX_WAN
+	spin_lock_irqsave(&list->lock, flags);
+	old_state = entry->state;
+	entry->state = state;
+	__skb_unlink(skb, list);
+
+	/* defer_bh() is never called with list == &dev->done.
+	 * spin_lock_nested() tells lockdep that it is OK to take
+	 * dev->done.lock here with list->lock held.
+	 */
+	spin_lock_nested(&dev->done.lock, SINGLE_DEPTH_NESTING);
+
+	__skb_queue_tail(&dev->done, skb);
+	if (dev->done.qlen == 1)
+		tasklet_schedule(&dev->bh);
+	spin_unlock(&dev->done.lock);
+	spin_unlock_irqrestore(&list->lock, flags);
+#else
 	spin_lock_irqsave(&list->lock, flags);
 	old_state = entry->state;
 	entry->state = state;
@@ -434,6 +461,7 @@ static enum skb_state defer_bh(struct usbnet *dev, struct sk_buff *skb,
 	if (dev->done.qlen == 1)
 		tasklet_schedule(&dev->bh);
 	spin_unlock_irqrestore(&dev->done.lock, flags);
+#endif
 	return old_state;
 }
 
@@ -445,12 +473,19 @@ static enum skb_state defer_bh(struct usbnet *dev, struct sk_buff *skb,
 void usbnet_defer_kevent (struct usbnet *dev, int work)
 {
 	set_bit (work, &dev->flags);
+#ifdef CONFIG_USB_NET_REX_WAN
+	if (!schedule_work (&dev->kevent))
+		netdev_dbg(dev->net, "kevent %d may have been dropped\n", work);
+	else
+		netdev_dbg(dev->net, "kevent %d scheduled\n", work);
+#else
 	if (!schedule_work (&dev->kevent)) {
 		if (net_ratelimit())
 			netdev_err(dev->net, "kevent %d may have been dropped\n", work);
 	} else {
 		netdev_dbg(dev->net, "kevent %d scheduled\n", work);
 	}
+#endif
 }
 EXPORT_SYMBOL_GPL(usbnet_defer_kevent);
 
@@ -749,6 +784,22 @@ EXPORT_SYMBOL_GPL(usbnet_unlink_rx_urbs);
 
 /*-------------------------------------------------------------------------*/
 
+#ifdef CONFIG_USB_NET_REX_WAN
+static void wait_skb_queue_empty(struct sk_buff_head *q)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&q->lock, flags);
+	while (!skb_queue_empty(q)) {
+		spin_unlock_irqrestore(&q->lock, flags);
+		schedule_timeout(msecs_to_jiffies(UNLINK_TIMEOUT_MS));
+		set_current_state(TASK_UNINTERRUPTIBLE);
+		spin_lock_irqsave(&q->lock, flags);
+	}
+	spin_unlock_irqrestore(&q->lock, flags);
+}
+#endif
+
 // precondition: never called in_interrupt
 static void usbnet_terminate_urbs(struct usbnet *dev)
 {
@@ -762,6 +813,13 @@ static void usbnet_terminate_urbs(struct usbnet *dev)
 		unlink_urbs(dev, &dev->rxq);
 
 	/* maybe wait for deletions to finish. */
+#ifdef CONFIG_USB_NET_REX_WAN
+	wait_skb_queue_empty(&dev->rxq);
+	wait_skb_queue_empty(&dev->txq);
+	wait_skb_queue_empty(&dev->done);
+	netif_dbg(dev, ifdown, dev->net,
+		  "waited for %d urb completions\n", temp);
+#else
 	while (!skb_queue_empty(&dev->rxq)
 		&& !skb_queue_empty(&dev->txq)
 		&& !skb_queue_empty(&dev->done)) {
@@ -770,6 +828,7 @@ static void usbnet_terminate_urbs(struct usbnet *dev)
 			netif_dbg(dev, ifdown, dev->net,
 				  "waited for %d urb completions\n", temp);
 	}
+#endif
 	set_current_state(TASK_RUNNING);
 	remove_wait_queue(&dev->wait, &wait);
 }
@@ -1487,6 +1546,9 @@ static void usbnet_bh (unsigned long param)
 		   netif_device_present (dev->net) &&
 		   netif_carrier_ok(dev->net) &&
 		   !timer_pending (&dev->delay) &&
+#ifdef CONFIG_USB_NET_REX_WAN
+		   !test_bit(EVENT_RX_PAUSED, &dev->flags) &&
+#endif
 		   !test_bit (EVENT_RX_HALT, &dev->flags)) {
 		int	temp = dev->rxq.qlen;
 
@@ -1644,6 +1706,7 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 	 * bind() should set rx_urb_size in that case.
 	 */
 	dev->hard_mtu = net->mtu + net->hard_header_len;
+
 #if 0
 // dma_supported() is deeply broken on almost all architectures
 	// possible with some EHCI controllers
@@ -1903,7 +1966,11 @@ static int __usbnet_read_cmd(struct usbnet *dev, u8 cmd, u8 reqtype,
 		   " value=0x%04x index=0x%04x size=%d\n",
 		   cmd, reqtype, value, index, size);
 
+#ifdef CONFIG_USB_NET_REX_WAN
+	if (size) {
+#else
 	if (data) {
+#endif
 		buf = kmalloc(size, GFP_KERNEL);
 		if (!buf)
 			goto out;
@@ -1912,8 +1979,18 @@ static int __usbnet_read_cmd(struct usbnet *dev, u8 cmd, u8 reqtype,
 	err = usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
 			      cmd, reqtype, value, index, buf, size,
 			      USB_CTRL_GET_TIMEOUT);
+#ifdef CONFIG_USB_NET_REX_WAN
+	if (err > 0 && err <= size) {
+        if (data)
+            memcpy(data, buf, err);
+        else
+            netdev_dbg(dev->net,
+                "Huh? Data requested but thrown away.\n");
+    }
+#else
 	if (err > 0 && err <= size)
 		memcpy(data, buf, err);
+#endif
 	kfree(buf);
 out:
 	return err;
@@ -1934,6 +2011,14 @@ static int __usbnet_write_cmd(struct usbnet *dev, u8 cmd, u8 reqtype,
 		buf = kmemdup(data, size, GFP_KERNEL);
 		if (!buf)
 			goto out;
+#ifdef CONFIG_USB_NET_REX_WAN
+	} else {
+        if (size) {
+            WARN_ON_ONCE(1);
+            err = -EINVAL;
+            goto out;
+        }
+#endif
 	}
 
 	err = usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0),
@@ -2037,8 +2122,10 @@ int usbnet_write_cmd_async(struct usbnet *dev, u8 cmd, u8 reqtype,
 
 	urb = usb_alloc_urb(0, GFP_ATOMIC);
 	if (!urb) {
+#ifndef CONFIG_USB_NET_REX_WAN
 		netdev_err(dev->net, "Error allocating URB in"
 			   " %s!\n", __func__);
+#endif
 		goto fail;
 	}
 

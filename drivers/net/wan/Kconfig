@@ -416,4 +416,7 @@ config SBNI_MULTILINE
 
 	  If unsure, say N.
 
+config WAN_REX
+	tristate "WAN module for REX platform"
+
 endif # WAN

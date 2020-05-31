@@ -289,6 +289,9 @@ extern unsigned long totalram_pages;
 extern unsigned long totalreserve_pages;
 extern unsigned long dirty_balance_reserve;
 extern unsigned long nr_free_buffer_pages(void);
+#if defined(CONFIG_TOI)
+extern unsigned long nr_unallocated_buffer_pages(void);
+#endif
 extern unsigned long nr_free_pagecache_pages(void);
 
 /* Definition of global_page_state not available yet */
@@ -328,6 +331,10 @@ extern unsigned long mem_cgroup_shrink_node_zone(struct mem_cgroup *mem,
 						struct zone *zone,
 						unsigned long *nr_scanned);
 extern unsigned long shrink_all_memory(unsigned long nr_pages);
+#if defined(CONFIG_TOI)
+extern unsigned long shrink_memory_mask(unsigned long nr_to_reclaim,
+		gfp_t mask);
+#endif
 extern int vm_swappiness;
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 extern unsigned long vm_total_pages;
@@ -436,6 +443,12 @@ extern struct swap_info_struct *page_swap_info(struct page *);
 extern int reuse_swap_page(struct page *);
 extern int try_to_free_swap(struct page *);
 struct backing_dev_info;
+#if defined(CONFIG_TOI)
+extern sector_t map_swap_entry(swp_entry_t entry, struct block_device **);
+extern struct swap_info_struct *get_swap_info_struct(unsigned);
+extern void get_swap_range_of_type(int type, swp_entry_t *start,
+		swp_entry_t *end, unsigned int limit);
+#endif
 
 #else /* CONFIG_SWAP */
 

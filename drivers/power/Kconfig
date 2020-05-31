@@ -304,6 +304,14 @@ config CHARGER_MAX8903
 	  pins based on the status of charger connections with interrupt
 	  handlers.
 
+config SABRESD_MAX8903
+	tristate "Sabresd Board Battery DC-DC Charger for USB and Adapter Power"
+	depends on TOUCHSCREEN_MAX11801
+	help
+	  Say Y to enable support for the MAX8903 DC-DC charger and sysfs on
+	  sabresd board.The driver supports controlling charger and battery
+	  based on the status of charger connections with interrupt handlers.
+
 config CHARGER_TWL4030
 	tristate "OMAP TWL4030 BCI charger driver"
 	depends on TWL4030_CORE
@@ -430,6 +438,27 @@ config BATTERY_GOLDFISH
 	help
 	  Say Y to enable support for the battery and AC power in the
 	  Goldfish emulator.
+
+config BD71827_POWER
+        tristate "ROHM BD71827 Charger for Battery and Adapter Power"
+        depends on MFD_BD71827
+        help
+          Say Y to enable support for the BD71827 charger.
+
+config AMAZON_SIGN_OF_LIFE_BD71827
+	bool "BD71827 - Sign of Life "
+	default n
+
+config CHARGER_DETECTOR_MAX14656
+	tristate "Maxim MAX14656 USB charger detector"
+	depends on I2C
+	depends on OF
+	default n
+	help
+	  Say Y to enable support for the Maxim MAX14656 USB charger detector.
+	  The device is compliant with the USB Battery Charging Specification
+	  Revision 1.2 and can be found e.g. in Kindle 4/5th generation
+	  readers and certain LG devices.
 
 config BATTERY_RT5033
 	tristate "RT5033 fuel gauge support"

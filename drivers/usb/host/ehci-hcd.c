@@ -93,7 +93,7 @@ module_param (log2_irq_thresh, int, S_IRUGO);
 MODULE_PARM_DESC (log2_irq_thresh, "log2 IRQ latency, 1-64 microframes");
 
 /* initial park setting:  slower than hw default */
-static unsigned park = 0;
+static unsigned park = 3;
 module_param (park, uint, S_IRUGO);
 MODULE_PARM_DESC (park, "park setting; 1-3 back-to-back async packets");
 
@@ -322,6 +322,45 @@ static int ehci_port_power(struct ehci_hcd *ehci, int portnum, bool enable);
 
 /*-------------------------------------------------------------------------*/
 
+#ifdef CONFIG_USB_REX_WAN
+static struct usb_hcd *wan_hcd;
+#endif
+
+#ifdef CONFIG_USB_REX_WAN
+/*
+ * Resume all usb devices connected to roothub of ci_hdrc.1
+ */
+int ehci_host_wan_resume_device(void)
+{
+	struct usb_device *roothub;
+	int port;
+	int ret = -EBUSY;
+
+	if (!wan_hcd) {
+		printk(KERN_ERR "ci_hdrc.1 isn't found!\n");
+		return -ENODEV;
+	}
+
+	roothub = wan_hcd->self.root_hub;
+	for (port = 1; port <= roothub->maxchild; port++) {
+		struct usb_device *udev;
+		udev = usb_hub_find_child(roothub, port);
+		if (udev && (udev->state == USB_STATE_SUSPENDED)) {
+			usb_lock_device(udev);
+			usb_disable_autosuspend(udev);
+			usb_enable_autosuspend(udev);
+			usb_unlock_device(udev);
+			ret = 0;
+		}
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(ehci_host_wan_resume_device);
+#endif
+
+/*-------------------------------------------------------------------------*/
+
 /* On some systems, leaving remote wakeup enabled prevents system shutdown.
  * The firmware seems to think that powering off is a wakeup event!
  * This routine turns off remote wakeup and everything else, on all ports.
@@ -331,7 +370,9 @@ static void ehci_turn_off_all_ports(struct ehci_hcd *ehci)
 	int	port = HCS_N_PORTS(ehci->hcs_params);
 
 	while (port--) {
-		ehci_writel(ehci, PORT_RWC_BITS,
+		u32 portsc = ehci_readl(ehci, &ehci->regs->port_status[port]);
+
+		ehci_writel(ehci, portsc,
 				&ehci->regs->port_status[port]);
 		spin_unlock_irq(&ehci->lock);
 		ehci_port_power(ehci, port, false);
@@ -423,6 +464,11 @@ static void ehci_stop (struct usb_hcd *hcd)
 	struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
 
 	ehci_dbg (ehci, "stop\n");
+
+#ifdef CONFIG_USB_REX_WAN
+	if (!strcmp(dev_name(hcd->self.controller), "ci_hdrc.1"))
+		wan_hcd = NULL;
+#endif
 
 	/* no more interrupts ... */
 
@@ -650,6 +696,11 @@ static int ehci_run (struct usb_hcd *hcd)
 	create_debug_files(ehci);
 	create_sysfs_files(ehci);
 
+#ifdef CONFIG_USB_REX_WAN
+	if (!strcmp(dev_name(hcd->self.controller), "ci_hdrc.1"))
+		wan_hcd = hcd;
+#endif
+
 	return 0;
 }
 
@@ -785,12 +836,18 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 
 			if (pstatus & PORT_OWNER)
 				continue;
+
 			if (!(test_bit(i, &ehci->suspended_ports) &&
 					((pstatus & PORT_RESUME) ||
 						!(pstatus & PORT_SUSPEND)) &&
 					(pstatus & PORT_PE) &&
-					ehci->reset_done[i] == 0))
+					ehci->reset_done[i] == 0)) {
+#ifdef CONFIG_USB_REX_WAN
+				ehci_dbg (ehci, "port %d remote wakeup skipped, suspended_ports==1(%d), (port_resume==1(%d) || suspend==0(%d), PortEnable==1(%d), reset_done==0(%lu)\n",
+					i + 1, (test_bit(i, &ehci->suspended_ports)), (pstatus & PORT_RESUME), !(pstatus & PORT_SUSPEND), (pstatus & PORT_PE), ehci->reset_done[i]);
+#endif
 				continue;
+			}
 
 			/* start USB_RESUME_TIMEOUT msec resume signaling from
 			 * this port, and make hub_wq collect

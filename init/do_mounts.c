@@ -592,6 +592,10 @@ void __init prepare_namespace(void)
 	if (is_floppy && rd_doload && rd_load_disk(0))
 		ROOT_DEV = Root_RAM0;
 
+#if defined(CONFIG_TOI)
+	check_resume_attempted();
+#endif
+
 	mount_root();
 out:
 	devtmpfs_mount("dev");

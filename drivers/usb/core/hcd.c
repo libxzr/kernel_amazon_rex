@@ -2247,7 +2247,11 @@ int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg)
 		usb_hub_for_each_child(rhdev, port1, udev) {
 			if (udev->state != USB_STATE_NOTATTACHED &&
 					!udev->port_is_suspended) {
+#ifdef CONFIG_USB_REX_WAN
+				usleep_range((TRSMRCY * 1000), ((TRSMRCY * 1000) + 1000)); /* TRSMRCY */
+#else
 				usleep_range(10000, 11000);	/* TRSMRCY */
+#endif
 				break;
 			}
 		}

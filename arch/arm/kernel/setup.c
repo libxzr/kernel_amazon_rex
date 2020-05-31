@@ -153,6 +153,10 @@ static union { char c[4]; unsigned long l; } endian_test __initdata = { { 'l', '
 #define ENDIANNESS ((char)endian_test.l)
 
 DEFINE_PER_CPU(struct cpuinfo_arm, cpu_data);
+#if defined(CONFIG_FALCON) && defined(CONFIG_SMP)
+EXPORT_SYMBOL(cpu_data);
+#endif
+
 
 /*
  * Standard memory resources

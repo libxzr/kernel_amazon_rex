@@ -98,7 +98,11 @@ source "drivers/mmc/Kconfig"
 
 source "drivers/memstick/Kconfig"
 
+source "drivers/mxc/Kconfig"
+
 source "drivers/leds/Kconfig"
+
+source "drivers/switch/Kconfig"
 
 source "drivers/accessibility/Kconfig"
 
@@ -174,6 +178,8 @@ source "drivers/phy/Kconfig"
 
 source "drivers/powercap/Kconfig"
 
+source "drivers/labutil/Kconfig"
+
 source "drivers/mcb/Kconfig"
 
 source "drivers/ras/Kconfig"
@@ -182,4 +188,5 @@ source "drivers/thunderbolt/Kconfig"
 
 source "drivers/android/Kconfig"
 
+source "drivers/falcon/Kconfig"
 endmenu

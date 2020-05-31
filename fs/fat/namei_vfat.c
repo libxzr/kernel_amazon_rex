@@ -72,8 +72,11 @@ static int vfat_revalidate_ci(struct dentry *dentry, unsigned int flags)
 	 * This may be nfsd (or something), anyway, we can't see the
 	 * intent of this. So, since this can be for creation, drop it.
 	 */
+#ifndef CONFIG_LAB126
+	/* The code used to be "(!nd)" which check a pointer, it should not be replaced with (!flags). */
 	if (!flags)
 		return 0;
+#endif
 
 	/*
 	 * Drop the negative dentry, in order to make sure to use the

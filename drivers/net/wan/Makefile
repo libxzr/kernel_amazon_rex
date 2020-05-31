@@ -22,7 +22,7 @@ obj-$(CONFIG_X25_ASY)		+= x25_asy.o
 
 obj-$(CONFIG_LANMEDIA)		+= lmc/
 
-obj-$(CONFIG_DLCI)		+= dlci.o 
+obj-$(CONFIG_DLCI)		+= dlci.o
 obj-$(CONFIG_SDLA)		+= sdla.o
 obj-$(CONFIG_LAPBETHER)		+= lapbether.o
 obj-$(CONFIG_SBNI)		+= sbni.o
@@ -32,6 +32,13 @@ obj-$(CONFIG_WANXL)		+= wanxl.o
 obj-$(CONFIG_PCI200SYN)		+= pci200syn.o
 obj-$(CONFIG_PC300TOO)		+= pc300too.o
 obj-$(CONFIG_IXP4XX_HSS)	+= ixp4xx_hss.o
+
+ifneq ($(CONFIG_WAN_REX),)
+obj-y                       += mwan-core.o
+obj-y                       += mwan.o
+obj-m                       += pkt_monitor.o
+mwan-objs                   := mwan_rex.o
+endif
 
 clean-files := wanxlfw.inc
 $(obj)/wanxl.o:	$(obj)/wanxlfw.inc

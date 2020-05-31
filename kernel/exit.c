@@ -389,6 +389,22 @@ static void exit_mm(struct task_struct *tsk)
 	struct mm_struct *mm = tsk->mm;
 	struct core_state *core_state;
 
+#ifdef CONFIG_FALCON_CMA
+	#include <linux/falcon_revert.h>
+	struct falcon_revert_entry *tmp_revert;
+
+	spin_lock(&falcon_revert_lock);
+	if (!list_empty(&falcon_revert_list)) {
+		list_for_each_entry(tmp_revert, &falcon_revert_list, head) {
+			if (tmp_revert->mm == mm) {
+				list_del(&tmp_revert->head);
+				kfree(tmp_revert);
+				break;
+			}
+		}
+	}
+	spin_unlock(&falcon_revert_lock);
+#endif
 	mm_release(tsk, mm);
 	if (!mm)
 		return;

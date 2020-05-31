@@ -4,6 +4,7 @@
 #include <linux/freezer.h>
 #include <linux/compiler.h>
 
+
 struct swsusp_info {
 	struct new_utsname	uts;
 	u32			version_code;
@@ -12,7 +13,21 @@ struct swsusp_info {
 	unsigned long		image_pages;
 	unsigned long		pages;
 	unsigned long		size;
+#if defined(CONFIG_LAB126) && defined(CONFIG_TOI)
+	u8                     pmicRegs[2];
+	char			archdata[4];
+	u32 over_sp_cnt;
+	u32 hole_page_cnt;
+	u32 			bmap[892];
+	u32 chain_info[5];
+}__attribute__((packed));
+#else
 } __aligned(PAGE_SIZE);
+#endif
+
+#if defined(CONFIG_LAB126) && defined(CONFIG_TOI)
+extern void __weak swsusp_arch_add_info(char *archdata, u32* over_sp_cnt, u32* free_page, u8 *pmicRegs, u32 *bmap, u32 *chain_info);
+#endif
 
 #ifdef CONFIG_HIBERNATION
 /* kernel/power/snapshot.c */
@@ -36,8 +51,17 @@ static inline char *check_image_kernel(struct swsusp_info *info)
 	return arch_hibernation_header_restore(info) ?
 			"architecture specific data" : NULL;
 }
+#else
+#if defined(CONFIG_TOI)
+extern char *check_image_kernel(struct swsusp_info *info);
+#endif
 #endif /* CONFIG_ARCH_HIBERNATION_HEADER */
 
+#if defined(CONFIG_TOI)
+extern int init_header(struct swsusp_info *info);
+
+extern char resume_file[256];
+#endif
 /*
  * Keep some memory free so that I/O operations can succeed without paging
  * [Might this be more than 4 MB?]
@@ -76,6 +100,10 @@ static struct kobj_attribute _name##_attr = {	\
 	.show	= _name##_show,			\
 	.store	= _name##_store,		\
 }
+
+#if defined(CONFIG_TOI)
+extern struct pbe *restore_pblist;
+#endif
 
 /* Preferred image size in bytes (default 500 MB) */
 extern unsigned long image_size;
@@ -269,6 +297,33 @@ static inline void suspend_thaw_processes(void)
 }
 #endif
 
+#if defined(CONFIG_TOI)
+extern struct page *saveable_page(struct zone *z, unsigned long p);
+#ifdef CONFIG_HIGHMEM
+struct page *saveable_highmem_page(struct zone *z, unsigned long p);
+#else
+static
+inline void *saveable_highmem_page(struct zone *z, unsigned long p)
+{
+	return NULL;
+}
+#endif
+
+#define PBES_PER_PAGE (PAGE_SIZE / sizeof(struct pbe))
+extern struct list_head nosave_regions;
+
+/**
+ *	This structure represents a range of page frames the contents of which
+ *	should not be saved during the suspend.
+ */
+
+struct nosave_region {
+	struct list_head list;
+	unsigned long start_pfn;
+	unsigned long end_pfn;
+};
+#endif
+
 #ifdef CONFIG_PM_AUTOSLEEP
 
 /* kernel/power/autosleep.c */
@@ -295,3 +350,10 @@ extern int pm_wake_lock(const char *buf);
 extern int pm_wake_unlock(const char *buf);
 
 #endif /* !CONFIG_PM_WAKELOCKS */
+
+#ifdef CONFIG_TOI
+unsigned long toi_get_nonconflicting_page(void);
+#define BM_END_OF_MAP	(~0UL)
+#else
+#define toi_get_nonconflicting_page() (0)
+#endif

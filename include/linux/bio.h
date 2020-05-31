@@ -32,6 +32,10 @@
 /* struct bio, bio_vec and BIO_* flags are defined in blk_types.h */
 #include <linux/blk_types.h>
 
+#if defined(CONFIG_TOI)
+extern int trap_non_toi_io;
+#endif
+
 #define BIO_DEBUG
 
 #ifdef BIO_DEBUG

@@ -30,6 +30,7 @@
 #include <asm/cp15.h>
 #include <asm/cputype.h>
 #include <asm/hardware/cache-l2x0.h>
+#include <asm/falcon_lock.h>
 #include "cache-tauros3.h"
 #include "cache-aurora-l2.h"
 
@@ -283,10 +284,12 @@ static void l2c220_op_way(void __iomem *base, unsigned reg)
 {
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&l2x0_lock, flags);
+	falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+				       &l2x0_lock, flags);
 	__l2c_op_way(base + reg);
 	__l2c220_cache_sync(base);
-	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+	falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+					    &l2x0_lock, flags);
 }
 
 static unsigned long l2c220_op_pa_range(void __iomem *reg, unsigned long start,
@@ -317,7 +320,8 @@ static void l2c220_inv_range(unsigned long start, unsigned long end)
 	void __iomem *base = l2x0_base;
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&l2x0_lock, flags);
+	falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+				       &l2x0_lock, flags);
 	if ((start | end) & (CACHE_LINE_SIZE - 1)) {
 		if (start & (CACHE_LINE_SIZE - 1)) {
 			start &= ~(CACHE_LINE_SIZE - 1);
@@ -336,7 +340,8 @@ static void l2c220_inv_range(unsigned long start, unsigned long end)
 				   start, end, flags);
 	l2c_wait_mask(base + L2X0_INV_LINE_PA, 1);
 	__l2c220_cache_sync(base);
-	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+	falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+					    &l2x0_lock, flags);
 }
 
 static void l2c220_clean_range(unsigned long start, unsigned long end)
@@ -350,12 +355,14 @@ static void l2c220_clean_range(unsigned long start, unsigned long end)
 		return;
 	}
 
-	raw_spin_lock_irqsave(&l2x0_lock, flags);
+	falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+				       &l2x0_lock, flags);
 	flags = l2c220_op_pa_range(base + L2X0_CLEAN_LINE_PA,
 				   start, end, flags);
 	l2c_wait_mask(base + L2X0_CLEAN_INV_LINE_PA, 1);
 	__l2c220_cache_sync(base);
-	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+	falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+					    &l2x0_lock, flags);
 }
 
 static void l2c220_flush_range(unsigned long start, unsigned long end)
@@ -369,12 +376,14 @@ static void l2c220_flush_range(unsigned long start, unsigned long end)
 		return;
 	}
 
-	raw_spin_lock_irqsave(&l2x0_lock, flags);
+	falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+				       &l2x0_lock, flags);
 	flags = l2c220_op_pa_range(base + L2X0_CLEAN_INV_LINE_PA,
 				   start, end, flags);
 	l2c_wait_mask(base + L2X0_CLEAN_INV_LINE_PA, 1);
 	__l2c220_cache_sync(base);
-	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+	falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+					    &l2x0_lock, flags);
 }
 
 static void l2c220_flush_all(void)
@@ -386,9 +395,11 @@ static void l2c220_sync(void)
 {
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&l2x0_lock, flags);
+	falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+				       &l2x0_lock, flags);
 	__l2c220_cache_sync(l2x0_base);
-	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+	falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+					    &l2x0_lock, flags);
 }
 
 static void l2c220_enable(void __iomem *base, u32 aux, unsigned num_lock)
@@ -472,7 +483,8 @@ static void l2c310_inv_range_erratum(unsigned long start, unsigned long end)
 		unsigned long flags;
 
 		/* Erratum 588369 for both clean+invalidate operations */
-		raw_spin_lock_irqsave(&l2x0_lock, flags);
+		falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+					       &l2x0_lock, flags);
 		l2c_set_debug(base, 0x03);
 
 		if (start & (CACHE_LINE_SIZE - 1)) {
@@ -489,7 +501,8 @@ static void l2c310_inv_range_erratum(unsigned long start, unsigned long end)
 		}
 
 		l2c_set_debug(base, 0x00);
-		raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+		falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+						    &l2x0_lock, flags);
 	}
 
 	__l2c210_op_pa_range(base + L2X0_INV_LINE_PA, start, end);
@@ -528,12 +541,14 @@ static void l2c310_flush_all_erratum(void)
 	void __iomem *base = l2x0_base;
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&l2x0_lock, flags);
+	falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+				       &l2x0_lock, flags);
 	l2c_set_debug(base, 0x03);
 	__l2c_op_way(base + L2X0_CLEAN_INV_WAY);
 	l2c_set_debug(base, 0x00);
 	__l2c210_cache_sync(base);
-	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+	falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+					    &l2x0_lock, flags);
 }
 
 static void __init l2c310_save(void __iomem *base)
@@ -582,9 +597,10 @@ static void l2c310_configure(void __iomem *base)
 	revision = readl_relaxed(base + L2X0_CACHE_ID) &
 				 L2X0_CACHE_ID_RTL_MASK;
 
-	if (revision >= L310_CACHE_ID_RTL_R2P0)
+	if (revision >= L310_CACHE_ID_RTL_R2P0) {
 		l2c_write_sec(l2x0_saved_regs.prefetch_ctrl, base,
 			      L310_PREFETCH_CTRL);
+	}
 	if (revision >= L310_CACHE_ID_RTL_R3P0)
 		l2c_write_sec(l2x0_saved_regs.pwr_ctrl, base,
 			      L310_POWER_CTRL);
@@ -1293,10 +1309,12 @@ static void aurora_pa_range(unsigned long start, unsigned long end,
 	while (start < end) {
 		range_end = aurora_range_end(start, end);
 
-		raw_spin_lock_irqsave(&l2x0_lock, flags);
+		falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+					       &l2x0_lock, flags);
 		writel_relaxed(start, base + AURORA_RANGE_BASE_ADDR_REG);
 		writel_relaxed(range_end - CACHE_LINE_SIZE, base + offset);
-		raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+		falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+						    &l2x0_lock, flags);
 
 		writel_relaxed(0, base + AURORA_SYNC_REG);
 		start = range_end;
@@ -1331,9 +1349,11 @@ static void aurora_flush_all(void)
 	unsigned long flags;
 
 	/* clean all ways */
-	raw_spin_lock_irqsave(&l2x0_lock, flags);
+	falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+				       &l2x0_lock, flags);
 	__l2c_op_way(base + L2X0_CLEAN_INV_WAY);
-	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+	falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+					    &l2x0_lock, flags);
 
 	writel_relaxed(0, base + AURORA_SYNC_REG);
 }
@@ -1348,12 +1368,14 @@ static void aurora_disable(void)
 	void __iomem *base = l2x0_base;
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&l2x0_lock, flags);
+	falcon_s_raw_spin_lock_irqsave(FALCON_SLOCK_OCACHE,
+				       &l2x0_lock, flags);
 	__l2c_op_way(base + L2X0_CLEAN_INV_WAY);
 	writel_relaxed(0, base + AURORA_SYNC_REG);
 	l2c_write_sec(0, base, L2X0_CTRL);
 	dsb(st);
-	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+	falcon_s_raw_spin_unlock_irqrestore(FALCON_SLOCK_OCACHE,
+					    &l2x0_lock, flags);
 }
 
 static void aurora_save(void __iomem *base)

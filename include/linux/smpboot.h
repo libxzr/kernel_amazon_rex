@@ -45,6 +45,11 @@ struct smp_hotplug_thread {
 	const char			*thread_comm;
 };
 
+#if defined(CONFIG_SMP) && defined(CONFIG_GENERIC_SMP_IDLE_THREAD) && \
+	defined(CONFIG_FALCON)
+struct task_struct *get_cpu_idle_thread(unsigned int cpu);
+#endif
+
 int smpboot_register_percpu_thread(struct smp_hotplug_thread *plug_thread);
 void smpboot_unregister_percpu_thread(struct smp_hotplug_thread *plug_thread);
 

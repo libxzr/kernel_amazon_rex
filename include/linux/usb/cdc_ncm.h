@@ -65,7 +65,11 @@
 #define	CDC_NCM_MIN_TX_PKT			512	/* bytes */
 
 /* Default value for MaxDatagramSize */
+#ifdef CONFIG_USB_NET_REX_WAN
+#define	CDC_NCM_MAX_DATAGRAM_SIZE		1514	/* bytes */
+#else
 #define	CDC_NCM_MAX_DATAGRAM_SIZE		8192	/* bytes */
+#endif
 
 /*
  * Maximum amount of datagrams in NCM Datagram Pointer Table, not counting
@@ -79,6 +83,13 @@
 #define CDC_NCM_TIMER_INTERVAL_USEC		400UL
 #define CDC_NCM_TIMER_INTERVAL_MIN		5UL
 #define CDC_NCM_TIMER_INTERVAL_MAX		(U32_MAX / NSEC_PER_USEC)
+
+#ifdef CONFIG_USB_NET_REX_WAN
+/* Driver flags */
+#define CDC_NCM_FLAG_NDP_TO_END			0x02	/* NDP is placed at end of frame */
+#define CDC_MBIM_FLAG_AVOID_ALTSETTING_TOGGLE	0x04	/* Avoid altsetting toggle during init */
+#define CDC_NCM_FLAG_RESET_NTB16 0x08	/* set NDP16 one more time after altsetting switch */
+#endif
 
 #define cdc_ncm_comm_intf_is_mbim(x)  ((x)->desc.bInterfaceSubClass == USB_CDC_SUBCLASS_MBIM && \
 				       (x)->desc.bInterfaceProtocol == USB_CDC_PROTO_NONE)
@@ -103,14 +114,26 @@ struct cdc_ncm_ctx {
 
 	spinlock_t mtx;
 	atomic_t stop;
+#ifdef CONFIG_USB_NET_REX_WAN
+	int drvflags;
+#endif
 
 	u32 timer_interval;
 	u32 max_ndp_size;
+#ifdef CONFIG_USB_NET_REX_WAN
+	struct usb_cdc_ncm_ndp16 *delayed_ndp16;
+#endif
 
 	u32 tx_timer_pending;
 	u32 tx_curr_frame_num;
 	u32 rx_max;
 	u32 tx_max;
+#ifdef CONFIG_USB_NET_REX_WAN
+	u32 tx_curr_size;
+	u32 tx_low_mem_max_cnt;
+	u32 tx_low_mem_val;
+	u32 tx_low_mem_dec_vote;
+#endif
 	u32 max_datagram_size;
 	u16 tx_max_datagrams;
 	u16 tx_remainder;
@@ -133,7 +156,12 @@ struct cdc_ncm_ctx {
 };
 
 u8 cdc_ncm_select_altsetting(struct usb_interface *intf);
+#ifdef CONFIG_USB_NET_REX_WAN
+int cdc_ncm_change_mtu(struct net_device *net, int new_mtu);
+int cdc_ncm_bind_common(struct usbnet *dev, struct usb_interface *intf, u8 data_altsetting, int drvflags);
+#else
 int cdc_ncm_bind_common(struct usbnet *dev, struct usb_interface *intf, u8 data_altsetting);
+#endif
 void cdc_ncm_unbind(struct usbnet *dev, struct usb_interface *intf);
 struct sk_buff *cdc_ncm_fill_tx_frame(struct usbnet *dev, struct sk_buff *skb, __le32 sign);
 int cdc_ncm_rx_verify_nth16(struct cdc_ncm_ctx *ctx, struct sk_buff *skb_in);

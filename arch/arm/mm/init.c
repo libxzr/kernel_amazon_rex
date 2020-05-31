@@ -32,11 +32,18 @@
 #include <asm/system_info.h>
 #include <asm/tlb.h>
 #include <asm/fixmap.h>
+#ifdef CONFIG_FALCON
+#include <asm/falcon_syscall.h>
+#endif
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
 #include "mm.h"
+
+#ifdef CONFIG_FALCON
+EXPORT_SYMBOL(max_pfn);
+#endif
 
 #ifdef CONFIG_CPU_CP15_MMU
 unsigned long __init __clear_cr(unsigned long mask)
@@ -138,6 +145,10 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max_low,
 {
 	unsigned long zone_size[MAX_NR_ZONES], zhole_size[MAX_NR_ZONES];
 	struct memblock_region *reg;
+
+#ifdef CONFIG_FALCON
+	falcon_mm_init(min, max_low);
+#endif
 
 	/*
 	 * initialise the zones.
@@ -264,9 +275,21 @@ void __init arm_memblock_init(const struct machine_desc *mdesc)
 
 	arm_mm_memblock_reserve();
 
+#if defined(CONFIG_FALCON) && defined(CONFIG_HAVE_MEMBLOCK)
+	falcon_mem_reserve();
+#if defined(CONFIG_FALCON_PSEUDO_NMI)
+	falcon_pnmi_handler_reserve();
+#endif
+#endif
+
 	/* reserve any platform specific memblock areas */
 	if (mdesc->reserve)
 		mdesc->reserve();
+
+#ifdef CONFIG_LAB126_PRINTK_BUFFER
+	extern void printk_reserve_buf(void);
+	printk_reserve_buf();
+#endif
 
 	early_init_fdt_scan_reserved_mem();
 

@@ -145,6 +145,10 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 		"CmaTotal:       %8lu kB\n"
 		"CmaFree:        %8lu kB\n"
 #endif
+#if defined(CONFIG_LAB126)
+		"=================================\n"
+		"Total RAM:                %8lu kB\n" //, total
+#endif
 		,
 		K(i.totalram),
 		K(i.freeram),
@@ -203,6 +207,9 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 #ifdef CONFIG_CMA
 		, K(totalcma_pages)
 		, K(global_page_state(NR_FREE_CMA_PAGES))
+#endif
+#if defined(CONFIG_LAB126)
+		, ((unsigned long)high_memory - PAGE_OFFSET) >> 10
 #endif
 		);
 

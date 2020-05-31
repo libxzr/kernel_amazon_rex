@@ -100,7 +100,11 @@ static const struct net_device_ops cdc_mbim_netdev_ops = {
 	.ndo_stop             = usbnet_stop,
 	.ndo_start_xmit       = usbnet_start_xmit,
 	.ndo_tx_timeout       = usbnet_tx_timeout,
+#ifdef CONFIG_USB_NET_REX_WAN
+	.ndo_change_mtu       = cdc_ncm_change_mtu,
+#else
 	.ndo_change_mtu       = usbnet_change_mtu,
+#endif
 	.ndo_set_mac_address  = eth_mac_addr,
 	.ndo_validate_addr    = eth_validate_addr,
 	.ndo_vlan_rx_add_vid  = cdc_mbim_rx_add_vid,
@@ -158,7 +162,11 @@ static int cdc_mbim_bind(struct usbnet *dev, struct usb_interface *intf)
 	if (!cdc_ncm_comm_intf_is_mbim(intf->cur_altsetting))
 		goto err;
 
+#ifdef CONFIG_USB_NET_REX_WAN
+	ret = cdc_ncm_bind_common(dev, intf, data_altsetting, dev->driver_info->data);
+#else
 	ret = cdc_ncm_bind_common(dev, intf, data_altsetting);
+#endif
 	if (ret)
 		goto err;
 

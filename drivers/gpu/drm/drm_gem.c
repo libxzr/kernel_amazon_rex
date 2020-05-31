@@ -137,7 +137,11 @@ int drm_gem_object_init(struct drm_device *dev,
 
 	drm_gem_private_object_init(dev, obj, size);
 
+#if defined(CONFIG_TOI)
+	filp = shmem_file_setup("drm mm object", size, VM_NORESERVE, 1);
+#else
 	filp = shmem_file_setup("drm mm object", size, VM_NORESERVE);
+#endif
 	if (IS_ERR(filp))
 		return PTR_ERR(filp);
 

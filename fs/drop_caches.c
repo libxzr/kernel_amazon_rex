@@ -8,6 +8,9 @@
 #include <linux/writeback.h>
 #include <linux/sysctl.h>
 #include <linux/gfp.h>
+#if defined(CONFIG_TOI)
+#include <linux/export.h>
+#endif
 #include "internal.h"
 
 /* A global variable is a bit ugly, but it keeps the code simple */
@@ -36,6 +39,14 @@ static void drop_pagecache_sb(struct super_block *sb, void *unused)
 	spin_unlock(&inode_sb_list_lock);
 	iput(toput_inode);
 }
+
+#if defined(CONFIG_TOI)
+/* For TuxOnIce */
+void drop_pagecache(void)
+{
+	iterate_supers(drop_pagecache_sb, NULL);
+}
+#endif
 
 int drop_caches_sysctl_handler(struct ctl_table *table, int write,
 	void __user *buffer, size_t *length, loff_t *ppos)

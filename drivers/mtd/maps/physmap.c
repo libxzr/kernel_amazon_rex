@@ -207,6 +207,34 @@ static void physmap_flash_shutdown(struct platform_device *dev)
 		if (mtd_suspend(info->mtd[i]) == 0)
 			mtd_resume(info->mtd[i]);
 }
+#ifdef CONFIG_FALCON_MTD_NOR
+static int physmap_flash_suspend(struct platform_device *dev,
+				 pm_message_t state)
+{
+	struct physmap_flash_info *info = platform_get_drvdata(dev);
+	int i;
+
+	for (i = 0; i < MAX_RESOURCES && info->mtd[i]; i++)
+		if (info->mtd[i]->suspend)
+			if (info->mtd[i]->suspend(info->mtd[i]) != 0)
+				return -EAGAIN;
+
+	return 0;
+}
+
+static int physmap_flash_resume(struct platform_device *dev)
+{
+	struct physmap_flash_info *info = platform_get_drvdata(dev);
+	int i;
+
+	for (i = 0; i < MAX_RESOURCES && info->mtd[i]; i++)
+		if (info->mtd[i]->resume)
+			info->mtd[i]->resume(info->mtd[i]);
+
+	return 0;
+}
+
+#endif
 #else
 #define physmap_flash_shutdown NULL
 #endif
@@ -215,6 +243,10 @@ static struct platform_driver physmap_flash_driver = {
 	.probe		= physmap_flash_probe,
 	.remove		= physmap_flash_remove,
 	.shutdown	= physmap_flash_shutdown,
+#ifdef CONFIG_FALCON_MTD_NOR
+	.suspend	= physmap_flash_suspend,
+	.resume		= physmap_flash_resume,
+#endif
 	.driver		= {
 		.name	= "physmap-flash",
 	},

@@ -16,13 +16,33 @@
  */
 
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/suspend.h>
 #include <asm/system_misc.h>
 #include <asm/idmap.h>
 #include <asm/suspend.h>
 #include <asm/memory.h>
 #include <asm/sections.h>
+#if defined(CONFIG_BD71827)
+#include <linux/mfd/bd71827.h>
+#endif
 #include "reboot.h"
+
+#if defined(CONFIG_LAB126) && defined(CONFIG_TOI)
+extern const void __nosave_begin, __nosave_end;
+extern void cpu_resume(void);
+extern void cpu_resume_restore_nosave(void);
+extern void get_block_chain_info(u32 *data);
+
+u32 __nosave_backup_phys;
+u32 __nosave_begin_phys;
+u32 __nosave_end_phys;
+u32 page_over_uboot_sp_cnt = 0;
+u32 hole_page_cnt = 0;
+u32 ps1_bmap[4096];
+extern void cpu_save_state(void);
+extern void cpu_restore_state(void);
+#endif
 
 int pfn_is_nosave(unsigned long pfn)
 {
@@ -36,12 +56,62 @@ void notrace save_processor_state(void)
 {
 	WARN_ON(num_online_cpus() != 1);
 	local_fiq_disable();
+#if defined(CONFIG_LAB126) && defined(CONFIG_TOI)
+	cpu_save_state();
+#endif
 }
 
 void notrace restore_processor_state(void)
 {
 	local_fiq_enable();
+
+	extern int in_suspend;
+
+	if(in_suspend)
+ 	  return;
+#if defined(CONFIG_LAB126) && defined(CONFIG_TOI)
+	cpu_restore_state();
+#endif
 }
+
+#if defined(CONFIG_LAB126) && defined(CONFIG_TOI)
+void swsusp_arch_add_info(char *archdata, u32* over_sp_cnt, u32* free_page, u8 *pmicRegs, u32 *bmap, u32 *chain_info)
+{
+	*(u32 *) archdata = virt_to_phys(cpu_resume_restore_nosave);
+	*over_sp_cnt = page_over_uboot_sp_cnt;
+	*free_page = hole_page_cnt;
+
+	memcpy((u32*) bmap, (u32*) ps1_bmap, 892*4);
+
+	printk(KERN_INFO "cpu_resume address 0x%X\n", *(u32 *)archdata);
+	printk(KERN_INFO "over_sp_cnt=(0x%X)%d\n", *over_sp_cnt, *over_sp_cnt);
+	printk(KERN_INFO "free_page=(0x%X)%d\n", *free_page, *free_page);
+
+#if defined(CONFIG_BD71827)
+	pmicRegs[0] = ext_bd71827_reg_read8(0x12);
+	printk(KERN_INFO "regadd:0x12 = %0X\n", pmicRegs[0]);
+#endif
+	memset(chain_info, 0x0, 5*sizeof(u32));
+	get_block_chain_info(chain_info);
+	if (chain_info[4] == 0) {
+		chain_info[4] = 1;
+	}
+	
+	printk(KERN_INFO "chain_info[0] = %d\n", chain_info[0]);
+	printk(KERN_INFO "chain_info[1] = %d\n", chain_info[1]);
+	printk(KERN_INFO "chain_info[2] = %d\n", chain_info[2]);
+	printk(KERN_INFO "chain_info[3] = %d\n", chain_info[3]);
+	printk(KERN_INFO "chain_info[4] = %d\n", chain_info[4]);
+}
+
+void toi_meta_add_info(u32 over_sp_cnt, u32 free_page_cnt, u32 *bmap)
+{
+	page_over_uboot_sp_cnt = over_sp_cnt;
+	hole_page_cnt = free_page_cnt;
+	memcpy((u32*) ps1_bmap, (u32*) bmap, 4096*4);
+}
+EXPORT_SYMBOL(toi_meta_add_info);
+#endif
 
 /*
  * Snapshot kernel memory and reset the system.
@@ -104,3 +174,28 @@ int swsusp_arch_resume(void)
 		resume_stack + ARRAY_SIZE(resume_stack));
 	return 0;
 }
+
+#if defined(CONFIG_LAB126) && defined(CONFIG_TOI)
+static int __init swsusp_arch_init(void)
+{
+	char *backup;
+	size_t len;
+
+	len = &__nosave_end - &__nosave_begin;
+	backup = kmalloc(len, GFP_KERNEL);
+	printk("############## init ###");
+	printk("Size of sector_t %d", sizeof(sector_t));
+	if (backup) {
+		pr_info("%s: Backed up %d byte nosave region\n", __func__, len);
+		memcpy(backup, &__nosave_begin, len);
+	}
+
+	__nosave_backup_phys = virt_to_phys(backup);
+	__nosave_begin_phys = virt_to_phys(&__nosave_begin);
+	__nosave_end_phys = virt_to_phys(&__nosave_end);
+
+	return 0;
+}
+
+late_initcall(swsusp_arch_init);
+#endif

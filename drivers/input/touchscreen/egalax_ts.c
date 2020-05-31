@@ -28,6 +28,9 @@
 #include <linux/bitops.h>
 #include <linux/input/mt.h>
 #include <linux/of_gpio.h>
+#ifdef CONFIG_FALCON
+#include <asm/falcon_syscall.h>
+#endif
 
 /*
  * Mouse Mode: some panel may configure the controller to mouse mode,
@@ -254,6 +257,42 @@ static int __maybe_unused egalax_ts_suspend(struct device *dev)
 static int __maybe_unused egalax_ts_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
+
+#ifdef CONFIG_FALCON
+	if (in_falcon()) {
+		struct egalax_ts *ts =
+			(struct egalax_ts *)i2c_get_clientdata(client);
+		struct input_dev *input_dev = ts->input_dev;
+		int error;
+
+		/* controller may be in sleep, wake it up. */
+		error = egalax_wake_up_device(client);
+		if (error) {
+			dev_err(&client->dev, "Failed to wake up the controller\n");
+			return error;
+		}
+
+		error = egalax_firmware_version(client);
+		if (error < 0) {
+			dev_err(&client->dev, "Failed to read firmware version\n");
+			return error;
+		}
+
+		__set_bit(EV_ABS, input_dev->evbit);
+		__set_bit(EV_KEY, input_dev->evbit);
+		__set_bit(BTN_TOUCH, input_dev->keybit);
+
+		input_set_abs_params(input_dev, ABS_X, 0, EGALAX_MAX_X, 0, 0);
+		input_set_abs_params(input_dev, ABS_Y, 0, EGALAX_MAX_Y, 0, 0);
+		input_set_abs_params(input_dev,
+				     ABS_MT_POSITION_X, 0, EGALAX_MAX_X, 0, 0);
+		input_set_abs_params(input_dev,
+				     ABS_MT_POSITION_Y, 0, EGALAX_MAX_Y, 0, 0);
+		input_mt_init_slots(input_dev, MAX_SUPPORT_POINTS, 0);
+
+		return error;
+	}
+#endif
 
 	return egalax_wake_up_device(client);
 }

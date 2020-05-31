@@ -10,11 +10,11 @@
 #include <linux/usb/phy.h>
 #include <linux/usb/otg.h>
 #include <linux/usb/otg-fsm.h>
+#include <linux/usb/chipidea.h>
 
 #include "ci.h"
 #include "udc.h"
 #include "bits.h"
-#include "debug.h"
 #include "otg.h"
 
 /**
@@ -66,9 +66,11 @@ static int ci_port_test_show(struct seq_file *s, void *data)
 	unsigned long flags;
 	unsigned mode;
 
+	pm_runtime_get_sync(ci->dev);
 	spin_lock_irqsave(&ci->lock, flags);
 	mode = hw_port_test_get(ci);
 	spin_unlock_irqrestore(&ci->lock, flags);
+	pm_runtime_put_sync(ci->dev);
 
 	seq_printf(s, "mode = %u\n", mode);
 
@@ -98,9 +100,11 @@ static ssize_t ci_port_test_write(struct file *file, const char __user *ubuf,
 	if (sscanf(buf, "%u", &mode) != 1)
 		return -EINVAL;
 
+	pm_runtime_get_sync(ci->dev);
 	spin_lock_irqsave(&ci->lock, flags);
 	ret = hw_port_test_set(ci, mode);
 	spin_unlock_irqrestore(&ci->lock, flags);
+	pm_runtime_put_sync(ci->dev);
 
 	return ret ? ret : count;
 }
@@ -316,8 +320,12 @@ static ssize_t ci_role_write(struct file *file, const char __user *ubuf,
 	if (role == CI_ROLE_END || role == ci->role)
 		return -EINVAL;
 
+	pm_runtime_get_sync(ci->dev);
+	disable_irq(ci->irq);
 	ci_role_stop(ci);
 	ret = ci_role_start(ci, role);
+	enable_irq(ci->irq);
+	pm_runtime_put_sync(ci->dev);
 
 	return ret ? ret : count;
 }
@@ -379,6 +387,80 @@ static const struct file_operations ci_registers_fops = {
 	.release		= single_release,
 };
 
+#ifdef CONFIG_USB_REX
+void ci_controller_set_phy_vcc(struct ci_hdrc *ci, bool vcc_enable, bool vcc_force);
+
+static int ci_phy_vcc_show(struct seq_file *s, void *data)
+{
+	struct ci_hdrc *ci = s->private;
+
+	seq_printf(s, "req_val:%d, curr_val:%d, force:%d, suspended:%d\n",
+			ci->phy_vcc_enable, usb_phy_get_vcc(ci->usb_phy), ci->phy_vcc_force, ci->phy_vcc_suspended);
+
+	return 0;
+}
+
+static ssize_t ci_phy_vcc_write(struct file *file, const char __user *ubuf,
+			     size_t count, loff_t *ppos)
+{
+	struct seq_file *s = file->private_data;
+	struct ci_hdrc *ci = s->private;
+	char lbuf[16];
+	unsigned char op;
+
+	memset(lbuf, 0, sizeof(lbuf));
+
+	if (copy_from_user(lbuf, ubuf, 1))
+		return -EFAULT;
+
+	op = lbuf[0];
+	if (op >= '0' && op <= '3') {
+		int val = (int)(op - '0');
+		bool vcc_enable = false;
+		bool vcc_force = false;
+
+		switch (val) {
+			case 0: // vcc off, no force
+				vcc_enable = false;
+				vcc_force = false;
+				break;
+			case 1: // vcc on, no force
+				vcc_enable = true;
+				vcc_force = false;
+				break;
+			case 2: // vcc off, force
+				vcc_enable = false;
+				vcc_force = true;
+				break;
+			case 3: // vcc on, force
+				vcc_enable = true;
+				vcc_force = true;
+				break;
+		}
+
+		ci_controller_set_phy_vcc(ci, vcc_enable, vcc_force);
+	}
+	else {
+		return -EINVAL;
+	}
+
+	return count;
+}
+
+static int ci_phy_vcc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ci_phy_vcc_show, inode->i_private);
+}
+
+static const struct file_operations ci_phy_vcc_fops = {
+	.open		= ci_phy_vcc_open,
+	.write		= ci_phy_vcc_write,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+#endif
+
 /**
  * dbg_create_files: initializes the attribute interface
  * @ci: device
@@ -424,6 +506,13 @@ int dbg_create_files(struct ci_hdrc *ci)
 				   &ci_role_fops);
 	if (!dent)
 		goto err;
+
+#ifdef CONFIG_USB_REX
+	dent = debugfs_create_file("phy_vcc", S_IRUGO | S_IWUSR, ci->debugfs, ci,
+				   &ci_phy_vcc_fops);
+	if (!dent)
+		goto err;
+#endif
 
 	dent = debugfs_create_file("registers", S_IRUGO, ci->debugfs, ci,
 				&ci_registers_fops);

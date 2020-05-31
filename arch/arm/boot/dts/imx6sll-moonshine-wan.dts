@@ -1,0 +1,49 @@
+/*
+ * Copyright (C) 2016 Freescale Semiconductor, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+#include "imx6sll-moonshine-wfo.dts"
+
+/ {
+	mwan {
+		compatible = "mwan-compatible";
+		wan_vbat_en =      <&gpio4 4  GPIO_ACTIVE_HIGH>;
+		wan_usb_en =       <&gpio4 2  GPIO_ACTIVE_HIGH>;
+		wan_power_on =     <&gpio4 6  GPIO_ACTIVE_HIGH>;
+		wan_disable_n =    <&gpio4 25 GPIO_ACTIVE_LOW>;
+		wan_fw_ready =     <&gpio3 30 GPIO_ACTIVE_HIGH>;
+		wan_reset_n =      <&gpio4 16 GPIO_ACTIVE_LOW>;
+		wan_sms_ready =    <&gpio4 22 GPIO_ACTIVE_HIGH>;
+		soc_wakeup =       <&gpio4 1  GPIO_ACTIVE_HIGH>;
+	};
+
+	wifi_brcm {
+		wan_module;
+	};
+};
+
+&usbotg2 {
+	dr_mode = "host";
+	disable-over-current;
+	status = "okay";
+};
+
+&usbphy2 {
+	phy-3p0-supply = <&ldo3_reg>;
+};
+
+
+&i2c3 {
+	smtc_sar@28 {
+		compatible = "semtech,sx9310";
+		reg = <0x28>;
+		interrupt-parent = <&gpio4>;
+		interrupts = <12 IRQ_TYPE_EDGE_FALLING>;
+		smtc,irq-gpio = <&gpio4 12 0x00>;
+	};
+};
+

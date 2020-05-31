@@ -241,7 +241,8 @@ static int backlight_suspend(struct device *dev)
 	mutex_lock(&bd->ops_lock);
 	if (bd->ops && bd->ops->options & BL_CORE_SUSPENDRESUME) {
 		bd->props.state |= BL_CORE_SUSPENDED;
-		backlight_update_status(bd);
+		if (!(bd->ops->options & BL_CORE_SKIPSUSPEND))
+			backlight_update_status(bd);
 	}
 	mutex_unlock(&bd->ops_lock);
 
@@ -255,7 +256,8 @@ static int backlight_resume(struct device *dev)
 	mutex_lock(&bd->ops_lock);
 	if (bd->ops && bd->ops->options & BL_CORE_SUSPENDRESUME) {
 		bd->props.state &= ~BL_CORE_SUSPENDED;
-		backlight_update_status(bd);
+		if (!(bd->ops->options & BL_CORE_SKIPRESUME))
+			backlight_update_status(bd);
 	}
 	mutex_unlock(&bd->ops_lock);
 

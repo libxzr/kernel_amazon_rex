@@ -229,7 +229,20 @@ void usb_put_intf(struct usb_interface *intf);
  * should cope with both LPJ calibration errors and devices not following every
  * detail of the USB Specification.
  */
+#ifdef CONFIG_USB_REX_WAN
+#define USB_RESUME_TIMEOUT	25 /* ms */
+#else
 #define USB_RESUME_TIMEOUT	40 /* ms */
+#endif
+
+/*
+ * TRSMRCY is defined by the USB 2.0 specification to be 10 msec,
+ */
+#ifdef CONFIG_USB_REX_WAN
+#define TRSMRCY			  10 /* ms */
+#else
+#define TRSMRCY			  10 /* ms */
+#endif
 
 /**
  * struct usb_interface_cache - long-term representation of a device interface
@@ -354,6 +367,7 @@ struct usb_bus {
 					 * Does the host controller use PIO
 					 * for control transfers?
 					 */
+	struct otg_fsm *otg_fsm;	/* usb otg finite state machine */
 	u8 otg_port;			/* 0, or number of OTG/HNP port */
 	unsigned is_b_host:1;		/* true during some HNP roleswitches */
 	unsigned b_hnp_enable:1;	/* OTG: did A-Host enable HNP? */

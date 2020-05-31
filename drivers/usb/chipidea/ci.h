@@ -50,6 +50,8 @@ enum ci_hw_regs {
 	OP_USBINTR,
 	OP_DEVICEADDR,
 	OP_ENDPTLISTADDR,
+	OP_TTCTRL,
+	OP_BURSTSIZE,
 	OP_PORTSC,
 	OP_DEVLC,
 	OP_OTGSC,
@@ -123,12 +125,16 @@ enum ci_revision {
  * @start: start this role
  * @stop: stop this role
  * @irq: irq handler for this role
+ * @suspend: system suspend handler for this role
+ * @resume: system resume handler for this role
  * @name: role name string (host/gadget)
  */
 struct ci_role_driver {
 	int		(*start)(struct ci_hdrc *);
 	void		(*stop)(struct ci_hdrc *);
 	irqreturn_t	(*irq)(struct ci_hdrc *);
+	void		(*suspend)(struct ci_hdrc *);
+	void		(*resume)(struct ci_hdrc *, bool power_lost);
 	const char	*name;
 };
 
@@ -191,6 +197,7 @@ struct hw_bank {
  * @debugfs: root dentry for this controller in debugfs
  * @id_event: indicates there is an id event, and handled at ci_otg_work
  * @b_sess_valid_event: indicates there is a vbus event, and handled
+ * @vbus_glitch_check_event: check if vbus change is a glitch
  * at ci_otg_work
  * @imx28_write_fix: Freescale imx28 needs swp instruction for writing
  * @supports_runtime_pm: if runtime pm is supported
@@ -212,6 +219,8 @@ struct ci_hdrc {
 	ktime_t				hr_timeouts[NUM_OTG_FSM_TIMERS];
 	unsigned			enabled_otg_timer_bits;
 	enum otg_fsm_timer		next_otg_timer;
+	struct timer_list		hnp_polling_timer;
+	struct work_struct		hnp_polling_work;
 	struct work_struct		work;
 	struct workqueue_struct		*wq;
 
@@ -241,11 +250,31 @@ struct ci_hdrc {
 	struct dentry			*debugfs;
 	bool				id_event;
 	bool				b_sess_valid_event;
+	bool				vbus_glitch_check_event;
 	bool				imx28_write_fix;
 	bool				supports_runtime_pm;
 	bool				in_lpm;
 	bool				wakeup_int;
 	enum ci_revision		rev;
+	/* register save area for suspend&resume */
+	u32				pm_command;
+	u32				pm_status;
+	u32				pm_intr_enable;
+	u32				pm_frame_index;
+	u32				pm_segment;
+	u32				pm_frame_list;
+	u32				pm_async_next;
+	u32				pm_configured_flag;
+	u32				pm_portsc;
+	u32				pm_usbmode;
+	struct work_struct		power_lost_work;
+
+#ifdef CONFIG_USB_REX
+	bool			phy_vcc_enable;
+	bool			phy_vcc_force;
+	bool			phy_vcc_suspended;
+	struct delayed_work		phy_vcc_work;
+#endif
 };
 
 static inline struct ci_role_driver *ci_role(struct ci_hdrc *ci)
@@ -265,9 +294,21 @@ static inline int ci_role_start(struct ci_hdrc *ci, enum ci_role role)
 		return -ENXIO;
 
 	ret = ci->roles[role]->start(ci);
-	if (!ret)
-		ci->role = role;
-	return ret;
+	if (ret)
+		return ret;
+
+	ci->role = role;
+
+	if (ci->usb_phy) {
+		if (role == CI_ROLE_HOST)
+			usb_phy_set_mode(ci->usb_phy,
+					USB_MODE_HOST);
+		else
+			usb_phy_set_mode(ci->usb_phy,
+					USB_MODE_DEVICE);
+	}
+
+	return 0;
 }
 
 static inline void ci_role_stop(struct ci_hdrc *ci)
@@ -280,6 +321,9 @@ static inline void ci_role_stop(struct ci_hdrc *ci)
 	ci->role = CI_ROLE_END;
 
 	ci->roles[role]->stop(ci);
+
+	if (ci->usb_phy)
+		usb_phy_set_mode(ci->usb_phy, USB_MODE_NONE);
 }
 
 /**
@@ -358,7 +402,6 @@ static inline void hw_write(struct ci_hdrc *ci, enum ci_hw_regs reg,
 	if (~mask)
 		data = (ioread32(ci->hw_bank.regmap[reg]) & ~mask)
 			| (data & mask);
-
 	__hw_write(ci, data, ci->hw_bank.regmap[reg]);
 }
 
@@ -374,7 +417,6 @@ static inline u32 hw_test_and_clear(struct ci_hdrc *ci, enum ci_hw_regs reg,
 				    u32 mask)
 {
 	u32 val = ioread32(ci->hw_bank.regmap[reg]) & mask;
-
 	__hw_write(ci, val, ci->hw_bank.regmap[reg]);
 	return val;
 }
@@ -392,7 +434,6 @@ static inline u32 hw_test_and_write(struct ci_hdrc *ci, enum ci_hw_regs reg,
 				    u32 mask, u32 data)
 {
 	u32 val = hw_read(ci, reg, ~0);
-
 	hw_write(ci, reg, mask, data);
 	return (val & mask) >> __ffs(mask);
 }
@@ -406,8 +447,11 @@ static inline u32 hw_test_and_write(struct ci_hdrc *ci, enum ci_hw_regs reg,
 static inline bool ci_otg_is_fsm_mode(struct ci_hdrc *ci)
 {
 #ifdef CONFIG_USB_OTG_FSM
+	struct usb_otg_caps *otg_caps = &ci->platdata->ci_otg_caps;
+
 	return ci->is_otg && ci->roles[CI_ROLE_HOST] &&
-					ci->roles[CI_ROLE_GADGET];
+		ci->roles[CI_ROLE_GADGET] && (otg_caps->srp_support ||
+		otg_caps->hnp_support || otg_caps->adp_support);
 #else
 	return false;
 #endif
@@ -426,4 +470,10 @@ u8 hw_port_test_get(struct ci_hdrc *ci);
 int hw_wait_reg(struct ci_hdrc *ci, enum ci_hw_regs reg, u32 mask,
 				u32 value, unsigned int timeout_ms);
 
+void ci_platform_configure(struct ci_hdrc *ci);
+int hw_controller_reset(struct ci_hdrc *ci);
+
+int dbg_create_files(struct ci_hdrc *ci);
+
+void dbg_remove_files(struct ci_hdrc *ci);
 #endif	/* __DRIVERS_USB_CHIPIDEA_CI_H */

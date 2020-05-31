@@ -669,7 +669,7 @@ config ARM_VIRT_EXT
 	  details.
 
 config SWP_EMULATE
-	bool "Emulate SWP/SWPB instructions" if !SMP
+	bool "Emulate SWP/SWPB instructions"
 	depends on CPU_V7
 	default y if SMP
 	select HAVE_PROC_CPU if PROC_FS
@@ -1038,3 +1038,57 @@ config DEBUG_RODATA
 	  text so it can be made explicitly non-executable. This creates
 	  another section-size padded region, so it can waste more memory
 	  space while gaining the read-only protections.
+
+config FALCON
+	bool "Falcon"
+	default n
+
+config FALCON_BIOS_ADDR
+	depends on FALCON
+	hex "Falcon BIOS virtual address"
+	default 0x00000000
+
+config FALCON_BIOS_SIZE
+	depends on FALCON
+	hex "Falcon BIOS size"
+	default 0x00010000
+
+config FALCON_STORAGE_BIOS_ADDR
+	depends on FALCON
+	hex "Storage BIOS virtual address"
+	default 0x00000000
+
+config FALCON_STORAGE_BIOS_SIZE
+	depends on FALCON
+	hex "Storage BIOS size"
+	default 0x00010000
+
+config FALCON_BIOS_WORK_SIZE
+	depends on FALCON
+	hex "BIOS work size"
+	default 0x00000000
+
+config FALCON_CMA
+	depends on (FALCON && CMA)
+	bool "Acquire bios work memory from cma"
+	default n
+
+config FALCON_PSEUDO_NMI
+	depends on FALCON
+	bool "Use Pseudo NMI handler"
+	default n
+
+config FALCON_PSEUDO_NMI_VECTOR_HOOK
+	depends on FALCON_PSEUDO_NMI
+	bool "Hook IRQ vector and call Pseudo NMI handler directly"
+	default n
+
+config FALCON_PSEUDO_NMI_HANDLER_ADDR
+	depends on FALCON_PSEUDO_NMI
+	hex "Pseudo NMI handler virtual address"
+	default 0x00000000
+
+config FALCON_PSEUDO_NMI_HANDLER_SIZE
+	depends on FALCON_PSEUDO_NMI
+	hex "Pseudo NMI handler size"
+	default 0x00000000

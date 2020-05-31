@@ -42,6 +42,9 @@ enum {
 extern void iotable_init(struct map_desc *, int);
 extern void vm_reserve_area_early(unsigned long addr, unsigned long size,
 				  void *caller);
+#ifdef CONFIG_FALCON
+extern void falcon_remapping(unsigned long start, unsigned long end);
+#endif
 
 #ifdef CONFIG_DEBUG_LL
 extern void debug_ll_addr(unsigned long *paddr, unsigned long *vaddr);

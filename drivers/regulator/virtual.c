@@ -11,12 +11,16 @@
  * License, or (at your option) any later version.
  */
 
+//#define DEBUG
 #include <linux/err.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
+#include <linux/regulator/of_regulator.h>
 #include <linux/slab.h>
 #include <linux/module.h>
+#include <linux/of.h>
+
 
 struct virtual_consumer_data {
 	struct mutex lock;
@@ -266,11 +270,11 @@ static ssize_t set_mode(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
-static DEVICE_ATTR(min_microvolts, 0664, show_min_uV, set_min_uV);
-static DEVICE_ATTR(max_microvolts, 0664, show_max_uV, set_max_uV);
-static DEVICE_ATTR(min_microamps, 0664, show_min_uA, set_min_uA);
-static DEVICE_ATTR(max_microamps, 0664, show_max_uA, set_max_uA);
-static DEVICE_ATTR(mode, 0664, show_mode, set_mode);
+static DEVICE_ATTR(min_microvolts, S_IWUSR | S_IRUGO | S_IWGRP, show_min_uV, set_min_uV);
+static DEVICE_ATTR(max_microvolts, S_IWUSR | S_IRUGO | S_IWGRP, show_max_uV, set_max_uV);
+static DEVICE_ATTR(min_microamps, S_IWUSR | S_IRUGO | S_IWGRP, show_min_uA, set_min_uA);
+static DEVICE_ATTR(max_microamps, S_IWUSR | S_IRUGO |S_IWGRP, show_max_uA, set_max_uA);
+static DEVICE_ATTR(mode, S_IWUSR |S_IRUGO | S_IWGRP, show_mode, set_mode);
 
 static struct attribute *regulator_virtual_attributes[] = {
 	&dev_attr_min_microvolts.attr,
@@ -285,9 +289,22 @@ static const struct attribute_group regulator_virtual_attr_group = {
 	.attrs	= regulator_virtual_attributes,
 };
 
+static const char* of_get_virt_regulator_config(struct device *dev, struct device_node *np)
+{
+	const char * reg_id;
+	int r;
+
+	r = of_property_read_string(np, "virtual-supply", &reg_id);
+	if (r) {
+		return NULL;
+	}
+	return reg_id;
+}
+
 static int regulator_virtual_probe(struct platform_device *pdev)
 {
-	char *reg_id = dev_get_platdata(&pdev->dev);
+	const char *reg_id = pdev->dev.platform_data;
+	struct device_node *np = pdev->dev.of_node;
 	struct virtual_consumer_data *drvdata;
 	int ret;
 
@@ -295,6 +312,23 @@ static int regulator_virtual_probe(struct platform_device *pdev)
 			       GFP_KERNEL);
 	if (drvdata == NULL)
 		return -ENOMEM;
+	if (np) {
+		reg_id = of_get_virt_regulator_config(&pdev->dev, np);
+	}
+
+	if (reg_id == NULL) {
+		dev_err(&pdev->dev, "Fail to get reg_id");
+		return -EINVAL;
+	}
+
+	if (np) {
+		reg_id = of_get_virt_regulator_config(&pdev->dev, np);
+	}
+
+	if (reg_id == NULL) {
+		dev_err(&pdev->dev, "Fail to get reg_id");
+		return -EINVAL;
+	}
 
 	mutex_init(&drvdata->lock);
 
@@ -318,6 +352,8 @@ static int regulator_virtual_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, drvdata);
 
+	dev_info(&pdev->dev, "attached: %s\n", reg_id);
+
 	return 0;
 }
 
@@ -330,14 +366,25 @@ static int regulator_virtual_remove(struct platform_device *pdev)
 	if (drvdata->enabled)
 		regulator_disable(drvdata->regulator);
 
+	platform_set_drvdata(pdev, NULL);
+
 	return 0;
 }
+
+#if defined(CONFIG_OF)
+static const struct of_device_id regulator_virtual_of_match[] = {
+	{ .compatible = "regulator-virtual", },
+	{},
+};
+#endif
 
 static struct platform_driver regulator_virtual_consumer_driver = {
 	.probe		= regulator_virtual_probe,
 	.remove		= regulator_virtual_remove,
 	.driver		= {
 		.name		= "reg-virt-consumer",
+		.owner		= THIS_MODULE,
+		.of_match_table = of_match_ptr(regulator_virtual_of_match),
 	},
 };
 

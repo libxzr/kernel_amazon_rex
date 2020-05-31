@@ -52,6 +52,8 @@ struct backlight_ops {
 	unsigned int options;
 
 #define BL_CORE_SUSPENDRESUME	(1 << 0)
+#define BL_CORE_SKIPSUSPEND	(1 << 1)
+#define BL_CORE_SKIPRESUME	(1 << 2)
 
 	/* Notify the backlight driver some property has changed */
 	int (*update_status)(struct backlight_device *);

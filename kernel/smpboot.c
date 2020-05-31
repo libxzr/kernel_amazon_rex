@@ -24,6 +24,18 @@
  * them.
  */
 static DEFINE_PER_CPU(struct task_struct *, idle_threads);
+#ifdef CONFIG_FALCON
+struct task_struct *get_cpu_idle_thread(unsigned int cpu)
+{
+	struct task_struct *tsk = per_cpu(idle_threads, cpu);
+
+	if (!tsk)
+		return ERR_PTR(-ENOMEM);
+
+	return tsk;
+}
+EXPORT_SYMBOL(get_cpu_idle_thread);
+#endif
 
 struct task_struct *idle_thread_get(unsigned int cpu)
 {
@@ -172,8 +184,11 @@ __smpboot_create_thread(struct smp_hotplug_thread *ht, unsigned int cpu)
 
 	if (tsk)
 		return 0;
-
+#if defined(CONFIG_TOI)
+	td = kzalloc_node(sizeof(*td), GFP_KERNEL | ___GFP_TOI_NOTRACK, cpu_to_node(cpu));
+#else
 	td = kzalloc_node(sizeof(*td), GFP_KERNEL, cpu_to_node(cpu));
+#endif
 	if (!td)
 		return -ENOMEM;
 	td->cpu = cpu;

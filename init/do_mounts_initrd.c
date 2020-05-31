@@ -15,6 +15,9 @@
 #include <linux/romfs_fs.h>
 #include <linux/initrd.h>
 #include <linux/sched.h>
+#if defined(CONFIG_TOI)
+#include <linux/suspend.h>
+#endif
 #include <linux/freezer.h>
 #include <linux/kmod.h>
 
@@ -79,6 +82,12 @@ static void __init handle_initrd(void)
 
 	current->flags &= ~PF_FREEZER_SKIP;
 
+#if defined(CONFIG_TOI)
+	if (!resume_attempted)
+		printk(KERN_ERR "TuxOnIce: No attempt was made to resume from "
+				"any image that might exist.\n");
+	clear_toi_state(TOI_BOOT_TIME);
+#endif
 	/* move initrd to rootfs' /old */
 	sys_mount("..", ".", NULL, MS_MOVE, NULL);
 	/* switch root and cwd back to / of rootfs */

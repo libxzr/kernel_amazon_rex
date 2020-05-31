@@ -206,6 +206,14 @@ __irq_svc:
 	irq_handler
 
 #ifdef CONFIG_PREEMPT
+#if defined(CONFIG_FALCON_DRV) || (defined(CONFIG_FALCON_PSEUDO_NMI) && \
+    !defined(CONFIG_FALCON_PSEUDO_NMI_VECTOR_HOOK))
+	add	r0, sp, #4                      @ pt_regs pointer
+	bl	falcon_needs_skipping_preempt
+	teq	r0, #0
+	bne	skip_preempt
+#endif
+
 	get_thread_info tsk
 	ldr	r8, [tsk, #TI_PREEMPT]		@ get preempt count
 	ldr	r0, [tsk, #TI_FLAGS]		@ get flags
@@ -213,6 +221,11 @@ __irq_svc:
 	movne	r0, #0				@ force flags to 0
 	tst	r0, #_TIF_NEED_RESCHED
 	blne	svc_preempt
+
+#if defined(CONFIG_FALCON_DRV) || (defined(CONFIG_FALCON_PSEUDO_NMI) && \
+    !defined(CONFIG_FALCON_PSEUDO_NMI_VECTOR_HOOK))
+skip_preempt:
+#endif
 #endif
 
 	svc_exit r5, irq = 1			@ return from exception
@@ -408,7 +421,7 @@ ENDPROC(__fiq_abt)
 	zero_fp
 
 	.if	\trace
-#ifdef CONFIG_IRQSOFF_TRACER
+#ifdef CONFIG_TRACE_IRQFLAGS
 	bl	trace_hardirqs_off
 #endif
 	ct_user_exit save = 0

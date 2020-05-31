@@ -59,6 +59,16 @@ EXPORT_SYMBOL_GPL(usb_phy_generic_unregister);
 
 static int nop_set_suspend(struct usb_phy *x, int suspend)
 {
+	struct usb_phy_generic *nop = dev_get_drvdata(x->dev);
+
+	if (IS_ERR(nop->clk))
+		return 0;
+
+	if (suspend)
+		clk_disable_unprepare(nop->clk);
+	else
+		clk_prepare_enable(nop->clk);
+
 	return 0;
 }
 
@@ -161,7 +171,8 @@ void usb_gen_phy_shutdown(struct usb_phy *phy)
 {
 	struct usb_phy_generic *nop = dev_get_drvdata(phy->dev);
 
-	gpiod_set_value(nop->gpiod_reset, 1);
+	if (nop->gpiod_reset)
+		gpiod_set_value(nop->gpiod_reset, 1);
 
 	if (!IS_ERR(nop->clk))
 		clk_disable_unprepare(nop->clk);

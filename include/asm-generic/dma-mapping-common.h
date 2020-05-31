@@ -7,6 +7,14 @@
 #include <linux/dma-debug.h>
 #include <linux/dma-attrs.h>
 
+#ifdef CONFIG_FALCON
+#include <linux/falconmem.h>
+#endif
+
+extern void falcon_set_preload(phys_addr_t paddr, u32 num);
+extern void falcon_clr_preload(phys_addr_t paddr, u32 num);
+
+
 static inline dma_addr_t dma_map_single_attrs(struct device *dev, void *ptr,
 					      size_t size,
 					      enum dma_data_direction dir,
@@ -20,6 +28,9 @@ static inline dma_addr_t dma_map_single_attrs(struct device *dev, void *ptr,
 	addr = ops->map_page(dev, virt_to_page(ptr),
 			     (unsigned long)ptr & ~PAGE_MASK, size,
 			     dir, attrs);
+#ifdef CONFIG_FALCON
+	falcon_set_preload(addr, (PAGE_ALIGN(size) >> PAGE_SHIFT));
+#endif
 	debug_dma_map_page(dev, virt_to_page(ptr),
 			   (unsigned long)ptr & ~PAGE_MASK, size,
 			   dir, addr, true);
@@ -34,6 +45,9 @@ static inline void dma_unmap_single_attrs(struct device *dev, dma_addr_t addr,
 	struct dma_map_ops *ops = get_dma_ops(dev);
 
 	BUG_ON(!valid_dma_direction(dir));
+#ifdef CONFIG_FALCON
+	falcon_clr_preload(addr, (PAGE_ALIGN(size) >> PAGE_SHIFT));
+#endif
 	if (ops->unmap_page)
 		ops->unmap_page(dev, addr, size, dir, attrs);
 	debug_dma_unmap_page(dev, addr, size, dir, true);
@@ -83,6 +97,11 @@ static inline dma_addr_t dma_map_page(struct device *dev, struct page *page,
 	kmemcheck_mark_initialized(page_address(page) + offset, size);
 	BUG_ON(!valid_dma_direction(dir));
 	addr = ops->map_page(dev, page, offset, size, dir, NULL);
+
+#ifdef CONFIG_FALCON
+	falcon_set_preload(addr, (PAGE_ALIGN(size) >> PAGE_SHIFT));
+#endif
+
 	debug_dma_map_page(dev, page, offset, size, dir, addr, false);
 
 	return addr;
@@ -94,6 +113,10 @@ static inline void dma_unmap_page(struct device *dev, dma_addr_t addr,
 	struct dma_map_ops *ops = get_dma_ops(dev);
 
 	BUG_ON(!valid_dma_direction(dir));
+#ifdef CONFIG_FALCON
+	falcon_clr_preload(addr, (PAGE_ALIGN(size) >> PAGE_SHIFT));
+#endif
+
 	if (ops->unmap_page)
 		ops->unmap_page(dev, addr, size, dir, NULL);
 	debug_dma_unmap_page(dev, addr, size, dir, false);

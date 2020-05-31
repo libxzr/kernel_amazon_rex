@@ -61,6 +61,10 @@ fw-shipped-$(CONFIG_DRM_RADEON) += radeon/R100_cp.bin radeon/R200_cp.bin \
 				   radeon/RV770_pfp.bin radeon/RV770_me.bin \
 				   radeon/RV730_pfp.bin radeon/RV730_me.bin \
 				   radeon/RV710_pfp.bin radeon/RV710_me.bin
+fw-shipped-$(CONFIG_IMX_SDMA) += imx/sdma/sdma-imx6q.bin imx/sdma/sdma-imx7d.bin
+fw-shipped-$(CONFIG_FB_MXC_EINK_V2_PANEL) += imx/epdc/epdc_default_wfm.fw
+fw-shipped-$(CONFIG_FB_MXC_EINK_V2_PANEL) += imx/epdc/epdc_ED060KC4.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_CYPRESS_CYTTSP5_LOADER) += cyttsp5/ms_cyttsp5_fw_pid00.bin
 fw-shipped-$(CONFIG_DVB_AV7110) += av7110/bootcode.bin
 fw-shipped-$(CONFIG_DVB_TTUSB_BUDGET) += ttusb-budget/dspbootcode.bin
 fw-shipped-$(CONFIG_E100) += e100/d101m_ucode.bin e100/d101s_ucode.bin \

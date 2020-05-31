@@ -35,6 +35,9 @@ void __fat_fs_error(struct super_block *sb, int report, const char *fmt, ...)
 	else if (opts->errors == FAT_ERRORS_RO && !(sb->s_flags & MS_RDONLY)) {
 		sb->s_flags |= MS_RDONLY;
 		fat_msg(sb, KERN_ERR, "Filesystem has been set read-only");
+#ifdef CONFIG_LAB126
+        fat_error_notify();
+#endif
 	}
 }
 EXPORT_SYMBOL_GPL(__fat_fs_error);

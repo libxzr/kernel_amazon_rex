@@ -37,6 +37,12 @@ config USB_COMMON
 config USB_ARCH_HAS_HCD
 	def_bool y
 
+config USB_REX
+	bool "USB for REX support"
+
+config USB_REX_WAN
+	bool "USB for REX WAN support"
+
 # ARM SA1111 chips have a non-PCI based "OHCI-compatible" USB host interface.
 config USB
 	tristate "Support for Host-side USB"
@@ -48,7 +54,7 @@ config USB
 	  traditional PC serial port.  The bus supplies power to peripherals
 	  and allows for hot swapping.  Up to 127 USB peripherals can be
 	  connected to a single USB host in a tree structure.
-	  
+
 	  The USB host is the root of the tree, the peripherals are the
 	  leaves and the inner nodes are special USB devices called hubs.
 	  Most PCs now have USB host ports, used to connect peripherals

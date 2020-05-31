@@ -60,10 +60,17 @@ enum usb_otg_state {
 	OTG_STATE_A_VBUS_ERR,
 };
 
+/* The usb role of phy to be working with */
+enum usb_current_mode {
+	USB_MODE_NONE,
+	USB_MODE_HOST,
+	USB_MODE_DEVICE,
+};
+
 struct usb_phy;
 struct usb_otg;
 
-/* for transceivers connected thru an ULPI interface, the user must
+/* for phys connected thru an ULPI interface, the user must
  * provide access ops
  */
 struct usb_phy_io_ops {
@@ -92,10 +99,10 @@ struct usb_phy {
 	u16			port_status;
 	u16			port_change;
 
-	/* to support controllers that have multiple transceivers */
+	/* to support controllers that have multiple phys */
 	struct list_head	head;
 
-	/* initialize/shutdown the OTG controller */
+	/* initialize/shutdown the phy */
 	int	(*init)(struct usb_phy *x);
 	void	(*shutdown)(struct usb_phy *x);
 
@@ -106,7 +113,7 @@ struct usb_phy {
 	int	(*set_power)(struct usb_phy *x,
 				unsigned mA);
 
-	/* Set transceiver into suspend mode */
+	/* Set phy into suspend mode */
 	int	(*set_suspend)(struct usb_phy *x,
 				int suspend);
 
@@ -122,6 +129,20 @@ struct usb_phy {
 			enum usb_device_speed speed);
 	int	(*notify_disconnect)(struct usb_phy *x,
 			enum usb_device_speed speed);
+	int	(*notify_suspend)(struct usb_phy *x,
+			enum usb_device_speed speed);
+	int	(*notify_resume)(struct usb_phy *x,
+			enum usb_device_speed speed);
+
+	int	(*set_mode)(struct usb_phy *x,
+			enum usb_current_mode mode);
+
+#ifdef CONFIG_USB_REX
+	/* Set vcc */
+	void (*set_vcc)(struct usb_phy *x, int on);
+	/* Get vcc */
+	int (*get_vcc)(struct usb_phy *x);
+#endif
 };
 
 /**
@@ -178,6 +199,24 @@ usb_phy_shutdown(struct usb_phy *x)
 		x->shutdown(x);
 }
 
+#ifdef CONFIG_USB_REX
+static inline void
+usb_phy_set_vcc(struct usb_phy *x, bool on)
+{
+	if (x && x->set_vcc)
+		x->set_vcc(x, on);
+}
+
+static inline int
+usb_phy_get_vcc(struct usb_phy *x)
+{
+	if (!x || !x->get_vcc)
+		return 0;
+
+	return x->get_vcc(x);
+}
+#endif
+
 static inline int
 usb_phy_vbus_on(struct usb_phy *x)
 {
@@ -194,6 +233,15 @@ usb_phy_vbus_off(struct usb_phy *x)
 		return 0;
 
 	return x->set_vbus(x, false);
+}
+
+static inline int
+usb_phy_set_mode(struct usb_phy *x, enum usb_current_mode mode)
+{
+	if (!x || !x->set_mode)
+		return 0;
+
+	return x->set_mode(x, mode);
 }
 
 /* for usb host and peripheral controller drivers */
@@ -298,6 +346,24 @@ usb_phy_notify_disconnect(struct usb_phy *x, enum usb_device_speed speed)
 {
 	if (x && x->notify_disconnect)
 		return x->notify_disconnect(x, speed);
+	else
+		return 0;
+}
+
+static inline int usb_phy_notify_suspend
+	(struct usb_phy *x, enum usb_device_speed speed)
+{
+	if (x && x->notify_suspend)
+		return x->notify_suspend(x, speed);
+	else
+		return 0;
+}
+
+static inline int usb_phy_notify_resume
+	(struct usb_phy *x, enum usb_device_speed speed)
+{
+	if (x && x->notify_resume)
+		return x->notify_resume(x, speed);
 	else
 		return 0;
 }

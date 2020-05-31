@@ -379,7 +379,11 @@ bool ns_capable(struct user_namespace *ns, int cap)
 		BUG();
 	}
 
+#ifdef CONFIG_LAB126
+	if (ns && (security_capable(current_cred(), ns, cap) == 0) ) {
+#else
 	if (security_capable(current_cred(), ns, cap) == 0) {
+#endif
 		current->flags |= PF_SUPERPRIV;
 		return true;
 	}

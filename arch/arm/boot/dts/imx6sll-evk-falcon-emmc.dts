@@ -1,0 +1,36 @@
+#include "imx6sll-evk.dts"
+
+&usdhc2 {
+	/delete-property/ compatible;
+	status = "disable";
+};
+
+&epit1 {
+	clocks = <&clks IMX6SLL_CLK_EPIT1>;
+	clock-names = "ipg";
+};
+
+/ {
+	falcon {
+		storage = <&usdhc2>;
+		storage-name = "mx6-falcon-emmc";
+		max_seg_size = <0xfe00>;
+		max_hw_segs = /bits/ 16 <128>; // multi sector I/O
+//		max_hw_segs = <1>;   // bounce buffer
+		max_phys_segs = /bits/ 16 <128>;
+		max_req_size = <(0xfe00 * 128)>;
+		max_blk_size = <0x200>;
+		max_blk_count = <(0xfe00 * 128 / 0x200)>;
+		irq = <(-1)>;
+		dma_mask = <0x0 0xffffffff>;
+		heads = /bits/ 8 <4>;
+		sectors = /bits/ 8 <16>;
+
+		falcon-bios = <0xadfd0000 0x00030000>;
+		storage-bios = <0xadfc0000 0x00010000>;
+		work-size = <0x00000000>;
+
+		timer = <&epit1>;
+	};
+};
+

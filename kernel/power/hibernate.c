@@ -31,7 +31,11 @@
 #include <linux/ktime.h>
 #include <trace/events/power.h>
 
+#if defined(CONFIG_TOI)
+#include "tuxonice.h"
+#else
 #include "power.h"
+#endif
 
 
 static int nocompress;
@@ -39,7 +43,11 @@ static int noresume;
 static int nohibernate;
 static int resume_wait;
 static unsigned int resume_delay;
+#if defined(CONFIG_TOI)
+char resume_file[256] = CONFIG_PM_STD_PARTITION;
+#else
 static char resume_file[256] = CONFIG_PM_STD_PARTITION;
+#endif
 dev_t swsusp_resume_device;
 sector_t swsusp_resume_block;
 __visible int in_suspend __nosavedata;
@@ -123,7 +131,11 @@ static int hibernation_test(int level) { return 0; }
  * platform_begin - Call platform to start hibernation.
  * @platform_mode: Whether or not to use the platform driver.
  */
+#if defined(CONFIG_TOI)
+int platform_begin(int platform_mode)
+#else
 static int platform_begin(int platform_mode)
+#endif
 {
 	return (platform_mode && hibernation_ops) ?
 		hibernation_ops->begin() : 0;
@@ -133,7 +145,11 @@ static int platform_begin(int platform_mode)
  * platform_end - Call platform to finish transition to the working state.
  * @platform_mode: Whether or not to use the platform driver.
  */
+#if defined(CONFIG_TOI)
+void platform_end(int platform_mode)
+#else
 static void platform_end(int platform_mode)
+#endif
 {
 	if (platform_mode && hibernation_ops)
 		hibernation_ops->end();
@@ -147,7 +163,11 @@ static void platform_end(int platform_mode)
  * if so configured, and return an error code if that fails.
  */
 
+#if defined(CONFIG_TOI)
+int platform_pre_snapshot(int platform_mode)
+#else
 static int platform_pre_snapshot(int platform_mode)
+#endif
 {
 	return (platform_mode && hibernation_ops) ?
 		hibernation_ops->pre_snapshot() : 0;
@@ -162,7 +182,11 @@ static int platform_pre_snapshot(int platform_mode)
  *
  * This routine is called on one CPU with interrupts disabled.
  */
+#if defined(CONFIG_TOI)
+void platform_leave(int platform_mode)
+#else
 static void platform_leave(int platform_mode)
+#endif
 {
 	if (platform_mode && hibernation_ops)
 		hibernation_ops->leave();
@@ -177,7 +201,11 @@ static void platform_leave(int platform_mode)
  *
  * This routine must be called after platform_prepare().
  */
+#if defined(CONFIG_TOI)
+void platform_finish(int platform_mode)
+#else
 static void platform_finish(int platform_mode)
+#endif
 {
 	if (platform_mode && hibernation_ops)
 		hibernation_ops->finish();
@@ -193,7 +221,11 @@ static void platform_finish(int platform_mode)
  * If the restore fails after this function has been called,
  * platform_restore_cleanup() must be called.
  */
+#if defined(CONFIG_TOI)
+int platform_pre_restore(int platform_mode)
+#else
 static int platform_pre_restore(int platform_mode)
+#endif
 {
 	return (platform_mode && hibernation_ops) ?
 		hibernation_ops->pre_restore() : 0;
@@ -210,7 +242,11 @@ static int platform_pre_restore(int platform_mode)
  * function must be called too, regardless of the result of
  * platform_pre_restore().
  */
+#if defined(CONFIG_TOI)
+void platform_restore_cleanup(int platform_mode)
+#else
 static void platform_restore_cleanup(int platform_mode)
+#endif
 {
 	if (platform_mode && hibernation_ops)
 		hibernation_ops->restore_cleanup();
@@ -220,7 +256,11 @@ static void platform_restore_cleanup(int platform_mode)
  * platform_recover - Recover from a failure to suspend devices.
  * @platform_mode: Whether or not to use the platform driver.
  */
+#if defined(CONFIG_TOI)
+void platform_recover(int platform_mode)
+#else
 static void platform_recover(int platform_mode)
+#endif
 {
 	if (platform_mode && hibernation_ops && hibernation_ops->recover)
 		hibernation_ops->recover();
@@ -646,6 +686,10 @@ int hibernate(void)
 {
 	int error;
 
+#if defined(CONFIG_TOI)
+	if (test_action_state(TOI_REPLACE_SWSUSP))
+		return try_tuxonice_hibernate();
+#endif
 	if (!hibernation_available()) {
 		pr_debug("PM: Hibernation not available.\n");
 		return -EPERM;
@@ -735,10 +779,24 @@ int hibernate(void)
  * attempts to recover gracefully and make the kernel return to the normal mode
  * of operation.
  */
+#if defined(CONFIG_TOI)
+int software_resume(void)
+#else
 static int software_resume(void)
+#endif
 {
 	int error;
 	unsigned int flags;
+
+#if defined(CONFIG_TOI)
+	resume_attempted = 1;
+
+	/*
+	 * We can't know (until an image header - if any - is loaded), whether
+	 * we did override swsusp. We therefore ensure that both are tried.
+	 */
+	try_tuxonice_resume();
+#endif
 
 	/*
 	 * If the user said "noresume".. bail out early.
@@ -1126,6 +1184,9 @@ static int __init hibernate_setup(char *str)
 static int __init noresume_setup(char *str)
 {
 	noresume = 1;
+#if defined(CONFIG_TOI)
+	set_toi_state(TOI_NORESUME_SPECIFIED);
+#endif
 	return 1;
 }
 

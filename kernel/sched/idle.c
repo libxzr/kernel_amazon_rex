@@ -15,6 +15,11 @@
 
 #include "sched.h"
 
+#ifdef CONFIG_FALCON
+void (*falcon_pm_idle)(void);
+EXPORT_SYMBOL(falcon_pm_idle);
+#endif
+
 static int __read_mostly cpu_idle_force_poll;
 
 void cpu_idle_poll_ctrl(bool enable)
@@ -104,6 +109,14 @@ static void cpuidle_idle_call(void)
 	 * step to the grace period
 	 */
 	rcu_idle_enter();
+
+#ifdef CONFIG_FALCON
+	if (falcon_pm_idle) {
+		falcon_pm_idle();
+		local_irq_enable();
+		goto exit_idle;
+	}
+#endif
 
 	if (cpuidle_not_available(drv, dev))
 		goto use_default;

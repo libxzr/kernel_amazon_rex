@@ -150,6 +150,23 @@ THUMB(	mov	sp, r2			)
 THUMB(	bx	r3			)
 ENDPROC(cpu_resume)
 
+#if defined(CONFIG_TOI)
+	.align
+ENTRY(cpu_resume_restore_nosave)
+	ldr	r0, =__nosave_backup_phys
+	ldr	r0, [r0]
+	ldr	r1, =__nosave_begin_phys
+	ldr	r1, [r1]
+	ldr	r2, =__nosave_end_phys
+	ldr	r2, [r2]
+1:	ldmia	r0!, {r3-r10}
+	stmia	r1!, {r3-r10}
+	cmp	r1, r2
+	bne	1b
+	b	cpu_resume
+ENDPROC(cpu_resume_restore_nosave)
+#endif
+
 	.align 2
 _sleep_save_sp:
 	.long	sleep_save_sp - .

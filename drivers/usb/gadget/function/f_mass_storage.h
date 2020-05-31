@@ -15,6 +15,9 @@ struct fsg_module_parameters {
 	unsigned int	nofua_count;
 	unsigned int	luns;	/* nluns */
 	bool		stall;	/* can_stall */
+#if defined(CONFIG_LAB126)
+	int             recovery_mode;
+#endif
 };
 
 #define _FSG_MODULE_PARAM_ARRAY(prefix, params, name, type, desc)	\
@@ -116,6 +119,9 @@ struct fsg_config {
 
 	char			can_stall;
 	unsigned int		fsg_num_buffers;
+#if defined(CONFIG_LAB126)
+	int             recovery_mode;
+#endif
 };
 
 static inline struct fsg_opts *

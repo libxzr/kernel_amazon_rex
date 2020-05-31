@@ -46,6 +46,7 @@
 #include <linux/oom.h>
 #include <linux/prefetch.h>
 #include <linux/printk.h>
+#include <linux/debugfs.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -189,6 +190,39 @@ static unsigned long get_lru_size(struct lruvec *lruvec, enum lru_list lru)
 	return zone_page_state(lruvec_zone(lruvec), NR_LRU_BASE + lru);
 }
 
+struct dentry *debug_file;
+
+static int debug_shrinker_show(struct seq_file *s, void *unused)
+{
+	struct shrinker *shrinker;
+	struct shrink_control sc;
+
+	sc.gfp_mask = -1;
+	sc.nr_to_scan = 0;
+
+	down_read(&shrinker_rwsem);
+	list_for_each_entry(shrinker, &shrinker_list, list) {
+		int num_objs;
+
+		num_objs = shrinker->count_objects(shrinker, &sc);
+		seq_printf(s, "%pf %d\n", shrinker->scan_objects, num_objs);
+	}
+	up_read(&shrinker_rwsem);
+	return 0;
+}
+
+static int debug_shrinker_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, debug_shrinker_show, inode->i_private);
+}
+
+static const struct file_operations debug_shrinker_fops = {
+        .open = debug_shrinker_open,
+        .read = seq_read,
+        .llseek = seq_lseek,
+        .release = single_release,
+};
+
 /*
  * Add a shrinker callback to be called from the vm.
  */
@@ -217,6 +251,15 @@ int register_shrinker(struct shrinker *shrinker)
 	return 0;
 }
 EXPORT_SYMBOL(register_shrinker);
+
+static int __init add_shrinker_debug(void)
+{
+	debugfs_create_file("shrinker", 0644, NULL, NULL,
+			    &debug_shrinker_fops);
+	return 0;
+}
+
+late_initcall(add_shrinker_debug);
 
 /*
  * Remove one
@@ -1409,7 +1452,11 @@ static int too_many_isolated(struct zone *zone, int file,
 {
 	unsigned long inactive, isolated;
 
+#if defined(CONFIG_TOI)
+	if (current_is_kswapd() || sc->hibernation_mode)
+#else
 	if (current_is_kswapd())
+#endif
 		return 0;
 
 	if (!global_reclaim(sc))
@@ -2258,6 +2305,11 @@ static inline bool should_continue_reclaim(struct zone *zone,
 	unsigned long pages_for_compaction;
 	unsigned long inactive_lru_pages;
 
+#if defined(CONFIG_TOI)
+	if (nr_reclaimed && nr_scanned && sc->nr_to_reclaim >= sc->nr_reclaimed)
+  		return true;
+#endif
+
 	/* If not in reclaim/compaction mode, stop */
 	if (!in_reclaim_compaction(sc))
 		return false;
@@ -2568,6 +2620,14 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 	unsigned long total_scanned = 0;
 	unsigned long writeback_threshold;
 	bool zones_reclaimable;
+
+#if defined(CONFIG_TOI)
+#ifdef CONFIG_FREEZER
+	if (unlikely(pm_freezing && !sc->hibernation_mode))
+		return 0;
+#endif
+#endif
+
 retry:
 	delayacct_freepages_start();
 
@@ -3450,6 +3510,13 @@ void wakeup_kswapd(struct zone *zone, int order, enum zone_type classzone_idx)
 	if (!populated_zone(zone))
 		return;
 
+#if defined(CONFIG_TOI)
+#ifdef CONFIG_FREEZER
+	if (pm_freezing)
+		return;
+#endif
+#endif
+
 	if (!cpuset_zone_allowed(zone, GFP_KERNEL | __GFP_HARDWALL))
 		return;
 	pgdat = zone->zone_pgdat;
@@ -3475,7 +3542,11 @@ void wakeup_kswapd(struct zone *zone, int order, enum zone_type classzone_idx)
  * LRU order by reclaiming preferentially
  * inactive > active > active referenced > active mapped
  */
+#if defined(CONFIG_TOI)
+unsigned long shrink_memory_mask(unsigned long nr_to_reclaim, gfp_t mask)
+#else
 unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
+#endif
 {
 	struct reclaim_state reclaim_state;
 	struct scan_control sc = {
@@ -3504,6 +3575,13 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
 
 	return nr_reclaimed;
 }
+
+#if defined(CONFIG_TOI)
+unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
+{
+	return shrink_memory_mask(nr_to_reclaim, GFP_HIGHUSER_MOVABLE);
+}
+#endif
 #endif /* CONFIG_HIBERNATION */
 
 /* It's optimal to keep kswapds on the same CPUs as their memory, but

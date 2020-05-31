@@ -68,7 +68,11 @@ int big_key_preparse(struct key_preparsed_payload *prep)
 		 *
 		 * TODO: Encrypt the stored data with a temporary key.
 		 */
+#if defined(CONFIG_TOI)
+		file = shmem_kernel_file_setup("", datalen, 0, 0);
+#else
 		file = shmem_kernel_file_setup("", datalen, 0);
+#endif
 		if (IS_ERR(file)) {
 			ret = PTR_ERR(file);
 			goto error;

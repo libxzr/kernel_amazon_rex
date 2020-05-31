@@ -324,6 +324,26 @@ config ISL29020
 	  This driver can also be built as a module.  If so, the module
 	  will be called isl29020.
 
+config SENSORS_FXOS8700
+	tristate "Freescale FXOS8700 M+G combo sensor"
+	depends on I2C && SYSFS
+	help
+	  If you say yes here you get support for the Freescale FXOS8700
+	  m+g combo  sensor.
+
+	  This driver can also be built as a module.  If so, the module
+	  will be called fxos8700.
+
+config SENSORS_FXAS2100X
+	tristate "Freescale FXAS2100X gyroscope sensor"
+	depends on I2C && SYSFS
+	help
+	  If you say yes here you get support for the Freescale FXAS2100X
+	  gyroscope sensor.
+
+	  This driver can also be built as a module.  If so, the module
+	  will be called fxas2100x.
+
 config SENSORS_TSL2550
 	tristate "Taos TSL2550 ambient light sensor"
 	depends on I2C && SYSFS
@@ -401,6 +421,10 @@ config TI_DAC7512
 
 	  This driver can also be built as a module. If so, the module
 	  will be called ti_dac7512.
+
+config UID_STAT
+	bool "UID based statistics tracking exported to /proc/uid_stat"
+	default n
 
 config VMWARE_BALLOON
 	tristate "VMware Balloon Driver"
@@ -514,6 +538,37 @@ config VEXPRESS_SYSCFG
 	  ARM Ltd. Versatile Express uses specialised platform configuration
 	  bus. System Configuration interface is one of the possible means
 	  of generating transactions on this bus.
+
+config BLUETOOTH_PWRCTRL
+        tristate "Amazon Bluetooth Power Control driver"
+        depends on ARCH_MXC
+        default n
+        help
+          This driver is serves as power control driver for any 3rd party
+          Bluetooth module in Amazon products. The driver power controls the
+          Bluetooth chip and also performs actions corresponding to power
+          optimisations done for Amazon consumer products.
+              This driver is designed to have minimal dependency on SoC, so that
+              it can be ported easily across different platforms
+
+config FRONTLIGHT
+	bool "Eink frontlight driver"
+	depends on LAB126
+	help
+	  Select Y here to enable Eink frontlight driver for Juno.
+
+config IDME
+	bool "IDME support"
+	depends on PROC_FS
+	help
+	  Select Y here to enable IDME support to read the data
+	  via userspace (i.e. /proc/idme/* entries)
+
+config UID_CPUTIME
+	tristate "Per-UID cpu time statistics"
+	depends on PROFILING
+	help
+	  Per UID based cpu time statistics exported to /proc/uid_cputime
 
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"

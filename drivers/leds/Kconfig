@@ -498,6 +498,14 @@ config LEDS_MENF21BMC
 	  This driver can also be built as a module. If so the module
 	  will be called leds-menf21bmc.
 
+config LEDS_BD71827
+	tristate "LED Support for BD71827 PMIC"
+	depends on LEDS_CLASS && MFD_BD71827
+	default n
+	help
+	  This option enables support for on-chip LED drivers on
+	  BD71827 PMIC.
+
 comment "LED driver for blink(1) USB RGB LED is under Special HID drivers (HID_THINGM)"
 
 config LEDS_BLINKM

@@ -1314,8 +1314,11 @@ static inline struct page *alloc_slab_page(struct kmem_cache *s,
 {
 	struct page *page;
 	int order = oo_order(oo);
-
+#if defined(CONFIG_TOI)
+	flags |= (__GFP_NOTRACK | ___GFP_TOI_NOTRACK);
+#else
 	flags |= __GFP_NOTRACK;
+#endif
 
 	if (memcg_charge_slab(s, flags, order))
 		return NULL;
@@ -3331,7 +3334,11 @@ static void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 	struct page *page;
 	void *ptr = NULL;
 
+#if defined(CONFIG_TOI)
+	flags |= __GFP_COMP | __GFP_NOTRACK | __GFP_TOI_NOTRACK;
+#else
 	flags |= __GFP_COMP | __GFP_NOTRACK;
+#endif
 	page = alloc_kmem_pages_node(node, flags, get_order(size));
 	if (page)
 		ptr = page_address(page);
